@@ -1,0 +1,8 @@
+Flask>=3.0,<4
+requests>=2.31,<3
+pycryptodome>=3.20,<4
+betterproto==1.2.5
+gmssl>=3.2,<4
+beautifulsoup4>=4.12,<5
+
+charset-normalizer>=3,<4

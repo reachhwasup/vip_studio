@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.env
+config.json
+drama_history.json
+*.log
+*.srt.backup-*
+*.mp4
+.app.pid
+src/
+macos/build/
+macos/dist/
+macos/.venv/
+macos/vendor/
+macos/release-repo/

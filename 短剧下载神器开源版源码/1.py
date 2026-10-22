@@ -47,6 +47,7 @@ def load_dotenv_file(path: Path) -> None:
 load_dotenv_file(Path(__file__).resolve().parent / ".env")
 
 from flurl.core import core_sixgod
+from hongguo_device import credentials, DeviceConfigurationError
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -113,17 +114,8 @@ def get_device_keys() -> Dict[str, str]:
         or str(config.get("platform") or config.get("DUANJU_PLATFORM") or "android")
     ).strip() or "android"
 
-    if not device_id or not install_id:
-        raise RuntimeError(
-            "Missing device configuration. Set DUANJU_DEVICE_ID / "
-            "DUANJU_INSTALL_ID, or open the web UI and save local config."
-        )
+    return credentials({"device_id": device_id, "install_id": install_id, "platform": platform})
 
-    return {
-        "device_id": device_id,
-        "install_id": install_id,
-        "platform": platform,
-    }
 
 def build_liushen_device(device_keys: Dict[str, str]) -> Dict[str, str]:
     """Build the minimum device payload required by liushen signing."""
@@ -399,6 +391,8 @@ def handle_video_request(
         return resolve_video_url(
             video_id, request, max_retries, output_relpath=(video_output_relpath(output_series, request.values.get("episode", ep)) if output_series else requested_output_relpath(request))
         )
+    except DeviceConfigurationError:
+        raise
     except Exception as exc:
         # If direct resolution failed, check whether video_id is a series_id
         if video_id.isdigit():
@@ -472,10 +466,6 @@ def resolve_video_url(
             last_err = Exception(f"video_model JSON parse failed: {exc}")
             continue
 
-        if not isinstance(data, dict) or "data" not in data:
-            print("video_model raw response:")
-            print(json.dumps(data, ensure_ascii=False, indent=2))
-
         try:
             fallback_api, video_model = extract_fallback_api(data, video_id)
         except Exception as exc:
@@ -517,9 +507,17 @@ def extract_fallback_api(
     data: Dict[str, Any], video_id: str
 ) -> Tuple[str, Dict[str, Any]]:
     """Extract fallback_api URL from video_model response."""
+    if not isinstance(data, dict):
+        raise ValueError("Hongguo returned an invalid video response. Please retry later.")
+    base = data.get("BaseResp")
+    base = base if isinstance(base, dict) else {}
+    code = data.get("Code") or data.get("code") or base.get("StatusCode")
+    if code not in (None, 0, "0"):
+        safe_code = re.sub(r"[^a-zA-Z0-9_-]", "", str(code))[:32] or "unknown"
+        raise ValueError(f"Hongguo could not provide video information (service error {safe_code}). Retry later; if it continues, check the Hongguo connection in Settings.")
     data_map = data.get("data")
     if not isinstance(data_map, dict):
-        raise ValueError("Response missing data field")
+        raise ValueError("Hongguo returned no video information. Retry later or check the Hongguo connection in Settings.")
 
     video_entry: Optional[Dict[str, Any]] = None
 

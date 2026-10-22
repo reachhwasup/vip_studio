@@ -14,6 +14,8 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 ## Features
 
+- Settings → Device configuration → Set up Hongguo automatically requests numeric device and install IDs from the service and saves them locally. Mac serial numbers and hardware IDs are rejected. Invalid setup pauses the queue so remaining episodes can be retried after correcting the connection.
+
 - Library resumes unfinished episodes and remembers the last 500 playback positions on this device. Start over replays an episode. Playback supports saved SRT captions, speed controls, previous/next episodes and opt-in automatic next episode.
 - Library filters include Continue watching and Missing subtitles, with sorting by date, title or episode count.
 - Subtitle generation checks on-screen captions plus local speech in Auto mode. Audio-only and picture-only methods are available; the Library remembers method and language. Conflicting speech suggestions remain available in Review & edit.

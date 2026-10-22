@@ -13,8 +13,11 @@ python app.py 5055
 Open `http://127.0.0.1:5055`. `start.sh` and `stop.sh` optionally manage the browser
 backend in the background. FFmpeg is required for episode downloads.
 
-The browser version accepts service credentials under **Settings → Device
-configuration**, or through `DUANJU_DEVICE_ID` and `DUANJU_INSTALL_ID`. See
+Use **Settings → Device configuration → Set up Hongguo automatically** to request
+service-issued numeric IDs. Manual IDs must contain digits only; Mac serial numbers
+and hardware identifiers cannot be used. Existing IDs are preserved when valid.
+
+The browser version also accepts service credentials through `DUANJU_DEVICE_ID` and `DUANJU_INSTALL_ID`. See
 `.env.example`. The standalone Android adapter handles its own phone detection and
 registration; it does not use the removed legacy registration script.
 

@@ -26,6 +26,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse, parse_qs
 
 import requests
 import gz360
+from hongguo_device import credentials as hongguo_credentials, DeviceConfigurationError, make_identity, register as register_hongguo, PARSER_DEVICE_PROFILE
 from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, request, send_from_directory
 
@@ -143,8 +144,14 @@ def get_config():
     device_id = os.getenv("DUANJU_DEVICE_ID") or str(cfg.get("device_id", ""))
     install_id = os.getenv("DUANJU_INSTALL_ID") or str(cfg.get("install_id", ""))
     platform = os.getenv("DUANJU_PLATFORM") or str(cfg.get("platform", "android"))
+    configuration_error = ""
+    try:
+        hongguo_credentials({"device_id": device_id, "install_id": install_id})
+    except DeviceConfigurationError as exc:
+        configuration_error = str(exc)
     return jsonify({
-        "configured": bool(device_id and install_id),
+        "configured": not bool(configuration_error),
+        "configuration_error": configuration_error,
         "device_id_masked": mask_value(device_id),
         "install_id_masked": mask_value(install_id),
         "platform": platform or "android",
@@ -154,19 +161,62 @@ def get_config():
 
 @app.route("/api/config", methods=["POST"])
 def save_config():
-    data = request.get_json(silent=True) or {}
-    device_id = str(data.get("device_id", "")).strip()
-    install_id = str(data.get("install_id", "")).strip()
-    platform = str(data.get("platform", "android")).strip() or "android"
-
-    if not device_id or not install_id:
-        return jsonify({"error": "device_id and install_id are required"}), 400
+    try:
+        values = hongguo_credentials(request.get_json(silent=True))
+    except DeviceConfigurationError as exc:
+        return jsonify({"error": str(exc), "code": "device_configuration"}), 400
+    device_id, install_id, platform = values['device_id'], values['install_id'], values['platform']
 
     with CONFIG_LOCK:
         cfg = read_local_config()
         cfg.update(device_id=device_id, install_id=install_id, platform=platform)
         write_local_config(cfg)
     return jsonify({"ok": True, "config_path": str(get_config_path())})
+
+
+DEVICE_SETUP_LOCK = threading.Lock()
+
+
+@app.post('/api/config/setup')
+def setup_hongguo_config():
+    origin = request.headers.get('Origin')
+    if request.remote_addr not in {'127.0.0.1', '::1'} or (origin and urlparse(origin).netloc != request.host):
+        return jsonify(error='Open the app on this computer to set up Hongguo.'), 403
+    if not DEVICE_SETUP_LOCK.acquire(blocking=False):
+        return jsonify(error='Hongguo setup is already running.'), 409
+    try:
+        try:
+            parser_module.get_device_keys()
+            return jsonify(ok=True, message='Valid numeric Hongguo IDs are already saved.')
+        except DeviceConfigurationError:
+            pass
+        if os.getenv('DUANJU_DEVICE_ID') or os.getenv('DUANJU_INSTALL_ID'):
+            return jsonify(error='Invalid DUANJU_DEVICE_ID or DUANJU_INSTALL_ID environment variables override Settings. Correct or remove them, then restart the app.'), 400
+        with CONFIG_LOCK:
+            cfg = read_local_config()
+            original = (cfg.get('device_id'), cfg.get('install_id'))
+            identity = cfg.get('hongguo_registration_identity')
+            if not isinstance(identity, dict) or not all(isinstance(identity.get(key), str) and identity[key] for key in ('openudid', 'clientudid', 'cdid')):
+                identity = make_identity()
+                cfg['hongguo_registration_identity'] = identity
+                write_local_config(cfg)
+        values = register_hongguo(PARSER_DEVICE_PROFILE, identity)
+        values = hongguo_credentials(values)
+        with CONFIG_LOCK:
+            cfg = read_local_config()
+            if (cfg.get('device_id'), cfg.get('install_id')) != original:
+                return jsonify(error='The connection was edited during setup. Your changes were preserved. Retry setup if needed.'), 409
+            cfg.update(values)
+            write_local_config(cfg)
+        return jsonify(ok=True, message='Numeric Hongguo IDs received and saved. Retry your failed downloads.')
+    except requests.exceptions.Timeout:
+        return jsonify(error='Hongguo setup timed out. Check your connection and retry.'), 504
+    except (requests.exceptions.RequestException, ValueError):
+        return jsonify(error='Hongguo did not issue usable IDs. Retry later or enter numeric IDs from your own Hongguo configuration.'), 502
+    except OSError:
+        return jsonify(error='Could not save the Hongguo connection. Check permissions for the app data folder.'), 500
+    finally:
+        DEVICE_SETUP_LOCK.release()
 
 
 @app.route("/api/download-path", methods=["GET", "POST"])
@@ -1327,6 +1377,8 @@ def hg():
                 parser_module.set_progress(key, "subtitles")
                 add_subtitles(result)
         return jsonify(result)
+    except DeviceConfigurationError as exc:
+        return jsonify({"error": str(exc), "code": "device_configuration"}), 400
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     finally:

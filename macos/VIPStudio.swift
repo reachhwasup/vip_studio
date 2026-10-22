@@ -102,7 +102,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavi
         const timingFunction = typeof window.retimeSubtitles === 'function';
         const timingResult = timingFunction ? window.retimeSubtitles([{start_time: 1, end_time: 2, text: 'Test'}], 4) : [];
         const connection = await (await fetch('/api/config')).json();
-        return {hongguoSetupButton: !!document.getElementById('setupHongguo'), hongguoConfigured: connection.configured, timingControls, timingFunction, timingCorrect: timingResult[0]?.start_time === 2 && timingResult[0]?.end_time === 4,
+        return {parallelChoices: Array.from(document.getElementById('queueParallelDownloads')?.options || []).map(option => option.value), downloadSubtitleTracking: typeof pollDownloadSubtitles === 'function', hongguoSetupButton: !!document.getElementById('setupHongguo'), hongguoConfigured: connection.configured, timingControls, timingFunction, timingCorrect: timingResult[0]?.start_time === 2 && timingResult[0]?.end_time === 4,
           editorCaptions, nativeVersion: document.getElementById('desktopVersion')?.textContent,
           updateStatus: document.getElementById('desktopUpdateStatus')?.textContent,
           notificationStatus: document.getElementById('desktopNotificationStatus')?.textContent,

@@ -1082,15 +1082,24 @@ def subtitle_regenerate():
     video = local_video_path(payload['url'])
     if video is None:
         return jsonify({'error': 'Saved episode not found.'}), 404
-    url = urlparse(payload['url']).path
+    try:
+        job = enqueue_subtitle_job(video, urlparse(payload['url']).path, mode, language)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 429
+    return jsonify(job), 202
+
+
+def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False):
+    """Downloads and Library share one OCR worker; video transfers never wait for it."""
     key = str(video)
     with SUBTITLE_JOBS_LOCK:
         for existing in SUBTITLE_JOBS.values():
             if existing['key'] == key and existing['status'] in ('queued', 'running'):
-                return jsonify(dict(existing)), 202
-        if sum(job['status'] in ('queued', 'running') for job in SUBTITLE_JOBS.values()) >= 10:
-            return jsonify({'error': 'The subtitle queue is full. Wait for an episode to finish.'}), 429
-        if len(SUBTITLE_JOBS) >= 100:
+                return dict(existing)
+        limit = 200 if download else 10
+        if sum(job['status'] in ('queued', 'running') for job in SUBTITLE_JOBS.values()) >= limit:
+            raise ValueError('The subtitle queue is full. Create subtitles from Library after existing jobs finish.')
+        if len(SUBTITLE_JOBS) >= 300:
             for old_id in list(SUBTITLE_JOBS):
                 if SUBTITLE_JOBS[old_id]['status'] in ('done', 'error'):
                     del SUBTITLE_JOBS[old_id]
@@ -1098,9 +1107,23 @@ def subtitle_regenerate():
         job_id = os.urandom(16).hex()
         job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
         SUBTITLE_JOBS[job_id] = job
-        response = dict(job)
-        SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job_id, video)
-    return jsonify(response), 202
+        try:
+            SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job_id, video)
+        except Exception:
+            del SUBTITLE_JOBS[job_id]
+            raise
+        return dict(job)
+
+
+@app.get('/api/subtitles/status')
+def subtitle_batch_status():
+    ids = request.args.get('ids', '').split(',')
+    if len(ids) > 200:
+        return jsonify(error='Request up to 200 subtitle jobs at a time.'), 400
+    with SUBTITLE_JOBS_LOCK:
+        jobs = {job_id: {key: value for key, value in SUBTITLE_JOBS[job_id].items() if key != 'key'}
+                for job_id in ids if job_id in SUBTITLE_JOBS}
+    return jsonify(jobs=jobs)
 
 
 def fetch_cover_image(url):
@@ -1369,10 +1392,18 @@ def hg():
                 remember_drama(series_id=request.values.get("series_id", ""), episode=request.values.get("episode") or result.get("episode"))
             except (OSError, ValueError) as exc:
                 app.logger.warning("Could not update drama history: %s", exc)
-        if request.values.get("subtitles") == "1":
+        if request.values.get("subtitles") in {"1", "background"}:
             srt = local_video_path(result.get("url"))
             if result.get("already_on_disk") and srt is not None and srt.with_suffix(".srt").is_file():
                 result["subtitle_url"] = result["url"][: -len(".mp4")] + ".srt"
+            elif request.values.get("subtitles") == "background":
+                if srt is None:
+                    result['subtitle_error'] = 'The saved video was not found. Create subtitles later from Library.'
+                else:
+                    try:
+                        result['subtitle_job'] = enqueue_subtitle_job(srt, urlparse(result['url']).path, download=True)
+                    except (ValueError, RuntimeError) as exc:
+                        result['subtitle_error'] = str(exc)
             else:
                 parser_module.set_progress(key, "subtitles")
                 add_subtitles(result)

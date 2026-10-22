@@ -14,6 +14,8 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 ## Features
 
+- Downloads → Episodes at once selects 1–4 simultaneous video downloads (three for new installations). The control stays in sync with Settings. Subtitles run in a separate queue and show progress on each saved video, so OCR and speech processing do not hold video download slots. Keep the app open for subtitle jobs; after a restart, check Library for saved SRT files or regenerate unfinished ones.
+
 - Settings → Device configuration → Set up Hongguo automatically requests numeric device and install IDs from the service and saves them locally. Mac serial numbers and hardware IDs are rejected. Invalid setup pauses the queue so remaining episodes can be retried after correcting the connection.
 
 - Library resumes unfinished episodes and remembers the last 500 playback positions on this device. Start over replays an episode. Playback supports saved SRT captions, speed controls, previous/next episodes and opt-in automatic next episode.

@@ -41,7 +41,7 @@
   }
   el('libraryCaptions').addEventListener('change', applyCaptions);
   el('librarySpeed').addEventListener('change', () => { video.playbackRate = Number(el('librarySpeed').value); });
-  window.addEventListener('vip-subtitles-saved', event => { if (selectedEpisode?.url === event.detail.url) refreshTrack(); });
+  window.addEventListener('vip-subtitles-saved', event => { if (selectedEpisode?.url === event.detail.url) { if (event.detail.subtitle_url) selectedEpisode.subtitle_url = event.detail.subtitle_url; refreshTrack(); renderSubtitleStatus(); } });
   video.addEventListener('loadedmetadata', () => {
     video.playbackRate = Number(el('librarySpeed').value);
     const position = vipLibraryTools.resumePosition(pendingResume, video.duration);

@@ -1,12 +1,14 @@
 """Local subtitle review APIs. Saving uses optimistic concurrency and a backup."""
+import html
 import hashlib
+import json
 import math
 import os
 import shutil
 import tempfile
 import uuid
 from pathlib import Path
-from flask import request, jsonify
+from flask import request, jsonify, Response
 from subtitle_formats import import_subtitles, export_subtitles
 from subtitles import _lock
 
@@ -16,6 +18,25 @@ def revision(path):
 
 
 def register_studio_features(app, local_video_path):
+    @app.get('/api/subtitles/track')
+    def subtitle_track():
+        video = local_video_path(request.args.get('url', ''))
+        if video is None:
+            return jsonify({'error': 'Saved video not found.'}), 404
+        srt = video.with_suffix('.srt')
+        if srt.is_symlink() or not srt.is_file():
+            return jsonify({'error': 'No saved subtitle file for this episode.'}), 404
+        try:
+            if srt.stat().st_size > 5 * 1024 * 1024:
+                return jsonify({'error': 'Subtitle file exceeds the 5 MB playback limit.'}), 400
+            segments = import_subtitles(srt.read_bytes(), srt.name)['segments']
+            for cue in segments:
+                cue['text'] = html.escape(cue['text'], quote=False)
+                cue['speaker'] = html.escape(cue.get('speaker', ''), quote=False)
+            return Response(export_subtitles(segments, 'vtt'), mimetype='text/vtt', headers={'Cache-Control': 'no-store'})
+        except (OSError, ValueError):
+            return jsonify({'error': 'Could not read these subtitles. Review or regenerate them in Library.'}), 400
+
     @app.route('/api/subtitles/review', methods=['GET', 'POST'])
     def review_subtitles():
         payload = request.args if request.method == 'GET' else request.get_json(silent=True)
@@ -38,7 +59,15 @@ def register_studio_features(app, local_video_path):
             current = revision(srt)
             if request.method == 'GET':
                 result = import_subtitles(srt.read_bytes(), srt.name)
-                return jsonify({'segments': result['segments'], 'revision': current})
+                analysis = {}
+                report_path = video.with_suffix('.transcript.json')
+                if report_path.is_file() and not report_path.is_symlink() and report_path.stat().st_size <= 10 * 1024 * 1024:
+                    try:
+                        metadata = json.loads(report_path.read_text(encoding='utf-8'))
+                        analysis = metadata.get('analysis', {}) if isinstance(metadata, dict) else {}
+                    except (OSError, ValueError):
+                        pass
+                return jsonify({'segments': result['segments'], 'revision': current, 'analysis': analysis})
             if payload.get('revision') != current:
                 return jsonify({'error': 'Subtitles changed since you opened them. Close and reopen the editor before saving.'}), 409
             segments = payload.get('segments')

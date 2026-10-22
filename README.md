@@ -11,6 +11,7 @@ Requires Apple Silicon and macOS 26 or later. Install version 1.2.0 once; subseq
 - Trending catalogue, episode downloads and shared posters
 - Local library with playback, history and download-folder selection
 - On-device subtitle OCR, SRT regeneration, backups and a timing/text editor
+- Subtitle timing stretch/compression, video duration comparison, fixed delays, reset and undo
 - Native macOS notifications
 - Signed in-app updates using Sparkle and GitHub Releases
 

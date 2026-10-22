@@ -9,7 +9,7 @@
  async function load(refresh=false){
   button.disabled=true;status.textContent='Loading trending dramas…';
   try{
-   const response=await fetch('/api/trending'+(refresh?'?refresh=1':'')),data=await response.json();
+   const response=await fetch('/api/trending'+(refresh?'?refresh=1':'')),data=await vipReadJSON(response);
    if(!response.ok)throw new Error(data.error||'Could not load trending dramas.');
    list.replaceChildren();
    data.items.forEach(item=>{

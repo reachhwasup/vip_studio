@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import threading
+import unicodedata
 import tempfile
 import subprocess
 import shutil
@@ -24,6 +25,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse, parse_qs
 
 import requests
+import gz360
 from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, request, send_from_directory
 
@@ -92,8 +94,9 @@ class _SkipProgressPolls(logging.Filter):
 
 logging.getLogger("werkzeug").addFilter(_SkipProgressPolls())
 handle_video_request = parser_module.handle_video_request
+from title_translation import translate_title
 from subtitle_formats import import_subtitles, normalize_segments, export_subtitles
-from subtitles import create_subtitles, unavailable_reason as subtitles_unavailable_reason  # noqa: E402
+from subtitles import capabilities as subtitle_capabilities, create_subtitles, unavailable_reason as subtitles_unavailable_reason  # noqa: E402
 
 
 # ───────────────────────── 配置 ─────────────────────────
@@ -521,11 +524,52 @@ def search_hongguo(
 
 
 def search_short_drama(keyword: str, page: int, source: str, category_filter: str) -> list[dict]:
+    if source == "gz360":
+        return gz360.search(keyword, page, category_filter)
     if SOURCE_ALIASES.get(source, source) == "hongguo_manju":
         return search_hongguo(
             keyword, page, category_filter, HONGGUO_MANJU_TYPES, "/category/comic-drama", site_search=False
         )
     return search_hongguo(keyword, page, category_filter)
+
+
+def search_all_sources(keyword, page, category_filter):
+    """Merge two source pages without discarding alternate episode lists.
+
+    Each pair of UI pages covers one 50-item page from each provider.
+    Matching titles are candidates for the same drama, not verified identities.
+    """
+    upstream_page = (page + 1) // 2
+    providers = [('Hongguo', '红果短剧'), ('GZ360', 'gz360')]
+    results, warnings = [], []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(search_short_drama, keyword, upstream_page, source, category_filter)
+                   for _, source in providers]
+        for (label, _), future in zip(providers, futures):
+            try:
+                results.append([dict(item, source_label=label) for item in future.result()])
+            except Exception:
+                results.append([])
+                warnings.append(f'{label} is unavailable. Retry to include its results.')
+    if len(warnings) == len(providers):
+        raise ValueError('Both sources are unavailable. Please retry later.')
+    groups, keys = [], {}
+    for index in range(max(map(len, results), default=0)):
+        for items in results:
+            if index >= len(items):
+                continue
+            item = items[index]
+            title = ' '.join(unicodedata.normalize('NFKC', str(item.get('title') or '')).casefold().split())
+            key = title or (item['source_label'], item.get('drama_id'), index)
+            if key not in keys:
+                group = dict(item, variants=[])
+                keys[key] = group
+                groups.append(group)
+            group = keys[key]
+            if not any(v.get('drama_id') == item.get('drama_id') and v['source_label'] == item['source_label'] for v in group['variants']):
+                group['variants'].append(item)
+    offset = 0 if page % 2 else 50
+    return groups[offset:offset + 50], warnings
 
 
 @app.route("/api/search", methods=["GET", "POST"])
@@ -547,14 +591,24 @@ def api_search():
     category_filter = str(payload.get("category_filter", "")).strip()
 
     try:
-        items = search_short_drama(keyword, page, source, category_filter)
+        warnings = []
+        if source == 'all':
+            items, warnings = search_all_sources(keyword, page, category_filter)
+        else:
+            items = search_short_drama(keyword, page, source, category_filter)
         if items:
             message = f"Search complete: page {page}, {len(items)} results."
         elif page > 1:
             message = f"No more results on page {page}."
         else:
             message = "No results. Try another keyword (Chinese keywords work best)."
-        return jsonify({"items": items, "page": page, "source": source, "message": message})
+        if source == 'all':
+            message += ' Matching titles are grouped; choose a source on each card.'
+            if not items:
+                message = 'No results in this combined page. Try the next page or another keyword.'
+        if warnings:
+            message += ' ' + ' '.join(warnings)
+        return jsonify({"items": items, "page": page, "source": source, "message": message, "warnings": warnings})
     except Exception as exc:
         return jsonify({"items": [], "page": page, "source": source, "message": f"Search failed: {exc}"}), 500
 
@@ -762,6 +816,68 @@ def drama_history():
         return jsonify({"error": "Could not read saved drama history."}), 500
 
 
+NOTIFICATION_LOCK = threading.Lock()
+
+
+def notification_history_path():
+    return parser_module.get_runtime_base_dir() / "notification_history.json"
+
+
+def read_notifications():
+    path = notification_history_path()
+    if not path.exists():
+        return []
+    items = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(items, list):
+        raise ValueError("Invalid notification history file")
+    return items
+
+
+def write_notifications(items):
+    path = notification_history_path()
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        json.dump(items[:100], handle, ensure_ascii=False, indent=2)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def remember_notification(title, body="", kind="info"):
+    """Notifications stay readable in the app after the system banner is gone."""
+    title = str(title or "").strip()[:160]
+    if not title:
+        raise ValueError("Missing notification title")
+    entry = {
+        "title": title,
+        "body": str(body or "").strip()[:1000],
+        "kind": kind if kind in ("info", "success", "warning", "error") else "info",
+        "created_at": time.time(),
+    }
+    with NOTIFICATION_LOCK:
+        items = [entry] + read_notifications()
+        write_notifications(items)
+        return items[:100]
+
+
+@app.route("/api/notifications", methods=["GET", "POST", "DELETE"])
+def notification_history():
+    try:
+        if request.method == "POST":
+            payload = request.get_json(silent=True) or {}
+            if not str(payload.get("title") or "").strip():
+                return jsonify({"error": "Missing notification title"}), 400
+            return jsonify({"items": remember_notification(payload.get("title"), payload.get("body"), payload.get("kind"))})
+        with NOTIFICATION_LOCK:
+            if request.method == "DELETE":
+                write_notifications([])
+                return jsonify({"items": []})
+            return jsonify({"items": read_notifications()})
+    except (OSError, ValueError):
+        return jsonify({"error": "Could not read saved notification history."}), 500
+
+
 @app.route("/api/episodes", methods=["GET", "POST"])
 def api_episodes():
     val = ""
@@ -774,6 +890,14 @@ def api_episodes():
     if not val:
         return jsonify({"error": "Missing id/url parameter"}), 400
 
+    if gz360.identify(val):
+        try:
+            detail = gz360.detail(val)
+            remember_drama(detail)
+            public = dict(detail, episodes=[{k: v for k, v in ep.items() if k not in ('stream_url', 'app_only')} for ep in detail['episodes']])
+            return jsonify(public)
+        except (ValueError, OSError) as exc:
+            return jsonify({'error': str(exc), 'episodes': []}), 502
     detail = parser_module.get_hongguo_series_detail(val)
     if not detail or not detail.get("vid_list"):
         return jsonify({"error": "Drama not found, or it has no episode list yet", "episodes": []}), 404
@@ -876,9 +1000,16 @@ def run_subtitle_repair(job_id, video_path):
     with SUBTITLE_JOBS_LOCK:
         SUBTITLE_JOBS[job_id]['status'] = 'running'
     try:
-        srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary())
+        with SUBTITLE_JOBS_LOCK:
+            options = dict(SUBTITLE_JOBS[job_id])
+        def stage(text):
+            with SUBTITLE_JOBS_LOCK:
+                SUBTITLE_JOBS[job_id]['stage'] = text
+        report = {}
+        srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(),
+            mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage)
         count = len(import_subtitles(srt.read_bytes(), srt.name)['segments'])
-        result = {'status': 'done', 'captions': count, 'method': method, 'updated_at': time.time()}
+        result = {'status': 'done', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'review_count': len(report.get('review_candidates', []))}
     except Exception as exc:
         app.logger.exception('Subtitle regeneration failed')
         result = {'status': 'error', 'error': str(exc)}
@@ -895,6 +1026,9 @@ def subtitle_regenerate():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict) or not isinstance(payload.get('url'), str):
         return jsonify({'error': 'Choose a saved episode.'}), 400
+    mode, language = payload.get('mode', 'auto'), payload.get('language', 'zh')
+    if mode not in ('auto', 'picture', 'audio') or language not in ('zh', 'en', 'auto'):
+        return jsonify({'error': 'Choose a valid subtitle method and spoken language.'}), 400
     video = local_video_path(payload['url'])
     if video is None:
         return jsonify({'error': 'Saved episode not found.'}), 404
@@ -912,7 +1046,7 @@ def subtitle_regenerate():
                     del SUBTITLE_JOBS[old_id]
                     break
         job_id = os.urandom(16).hex()
-        job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
+        job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
         SUBTITLE_JOBS[job_id] = job
         response = dict(job)
         SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job_id, video)
@@ -924,7 +1058,7 @@ def fetch_cover_image(url):
     for _ in range(5):
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
-        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.username or parsed.password or not any(host == domain or host.endswith("." + domain) for domain in ("byteimg.com", "fqnovelstatic.com", "bytegecko.com")):
+        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.username or parsed.password or not any(host == domain or host.endswith("." + domain) for domain in ("byteimg.com", "fqnovelstatic.com", "bytegecko.com", "ms39pn.com")):
             raise ValueError("The poster address is not a supported catalogue image URL.")
         with requests.get(url, timeout=(5, 15), stream=True, allow_redirects=False) as response:
             if response.is_redirect:
@@ -1053,13 +1187,16 @@ def add_subtitles(result: dict) -> None:
         result["subtitle_error"] = "the downloaded video file was not found"
         return
     try:
-        srt_path, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary())
+        report = {}
+        srt_path, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(), report=report)
     except Exception as exc:
         print(f"[subtitles] failed file={video_path.name} error={exc}")
         result["subtitle_error"] = str(exc)
         return
     result["subtitle_url"] = url[: -len(".mp4")] + ".srt"
-    result["subtitle_source"] = method  # "picture": read from the frames; "audio": speech recognition
+    result["subtitle_source"] = method
+    result["subtitle_warnings"] = report.get("warnings", [])
+    result["subtitle_review_count"] = len(report.get("review_candidates", []))
 
 
 @app.route("/api/subtitles/import", methods=["POST"])
@@ -1098,7 +1235,7 @@ def subtitle_export():
 @app.route("/api/subtitles", methods=["GET"])
 def api_subtitles():
     reason = subtitles_unavailable_reason()
-    return jsonify({"available": not reason, "reason": reason})
+    return jsonify({"available": not reason, "reason": reason, **subtitle_capabilities()})
 
 
 def existing_download(series: str, episode: str):
@@ -1133,10 +1270,49 @@ def hg():
     parser_module.set_progress(key, "resolving")
     try:
         result = None
+        gz_detail = gz360.detail(key) if gz360.identify(key) else None
+        gz_episode = None
+        if gz_detail:
+            identity = gz360.identify(key)
+            if identity[1]:
+                gz_episode = next((ep for ep in gz_detail['episodes'] if ep['vid'] == key), None)
+            elif gz_detail['episodes']:
+                gz_episode = gz_detail['episodes'][0]
+            if not gz_episode:
+                raise ValueError('This GZ360 episode is no longer available.')
+        original_title = gz_detail['title'] if gz_detail else request.values.get("series", "")
+        english_title = ""
+        if request.values.get("english_title") == "1":
+            if not original_title:
+                detail = parser_module.get_hongguo_series_detail(key)
+                original_title = (detail or {}).get("title", "")
+            english_title = translate_title(original_title, parser_module.get_runtime_base_dir() / 'english_titles.json')
+            if not parser_module.safe_filename_part(english_title):
+                raise ValueError('Translation did not produce a usable filename.')
+        output_title = english_title or original_title
+        episode_number = gz_episode['ep'] if gz_episode else request.values.get("episode", "")
+        if gz_detail:
+            output_title = 'GZ360 - ' + output_title
         if request.values.get("skip_existing") == "1":
-            result = existing_download(request.values.get("series", ""), request.values.get("episode", ""))
+            result = existing_download(output_title, episode_number)
+        if result is None and gz_detail:
+            stream_url = gz360.playable_url(gz_episode)
+            url = parser_module.stream_copy_video_with_ffmpeg(
+                parser_module.get_current_domain(request), stream_url, None,
+                parser_module.video_output_relpath(output_title, episode_number), key)
+            result = {'url': url}
         if result is None:
-            result = handle_video_request(key, request, max_retries=3)
+            result = handle_video_request(key, request, max_retries=3, **({"output_series": english_title} if english_title else {}))
+        if english_title:
+            result["original_title"] = original_title
+            result["series_name"] = english_title
+            result["episode"] = result.get("episode") or request.values.get("episode", "")
+        if gz_detail:
+            result.update(series_name=english_title or original_title, episode=episode_number, pic=gz_detail['cover'])
+            try:
+                remember_drama(gz_detail, episode=episode_number)
+            except (OSError, ValueError) as exc:
+                app.logger.warning('Could not save GZ360 history: %s', exc)
         add_download_cover(result, request.values.get("cover", ""))
         if local_video_path(result.get("url")):
             try:

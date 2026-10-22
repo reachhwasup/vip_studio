@@ -214,7 +214,6 @@ def set_progress(key: str, stage: str, percent: Optional[float] = None, size: in
     if key:
         DOWNLOAD_PROGRESS[key] = {"stage": stage, "percent": percent, "bytes": size}
 FFMPEG_BIN = "ffmpeg"
-VIDEO_TTL_SECONDS = 300
 
 
 def get_ffmpeg_binary() -> str:
@@ -261,21 +260,6 @@ def requested_output_relpath(request) -> str:
         if source and source.get("series"):
             return video_output_relpath(source.get("series"), source.get("episode"))
     return ""
-
-
-def schedule_video_cleanup(filepath: Path, delay_seconds: int = VIDEO_TTL_SECONDS) -> None:
-    """Delete generated video files after a fixed retention period."""
-
-    def _delete_file() -> None:
-        try:
-            filepath.unlink(missing_ok=True)
-            print(f"[cleanup] deleted_expired_video={filepath.name}")
-        except Exception as exc:
-            print(f"[cleanup] delete_failed file={filepath.name} error={exc}")
-
-    timer = threading.Timer(delay_seconds, _delete_file)
-    timer.daemon = True
-    timer.start()
 
 
 def curl_request(
@@ -373,6 +357,7 @@ def handle_video_request(
     video_id: str,
     request=None,
     max_retries: int = 3,
+    output_series: str = "",
 ) -> Dict[str, Any]:
     """
     Top-level handler. Given a video_id (or series URL/series_id), returns the flattened response payload.
@@ -401,7 +386,7 @@ def handle_video_request(
             actual_vid = series_info["vid_list"][idx]
             res = resolve_video_url(
                 actual_vid, request, max_retries,
-                output_relpath=video_output_relpath(series_info.get("title", ""), idx + 1),
+                output_relpath=video_output_relpath(output_series or series_info.get("title", ""), idx + 1),
             )
             res["pic"] = series_info.get("cover") or res.get("pic", "")
             res["series_name"] = series_info.get("title", "")
@@ -412,7 +397,7 @@ def handle_video_request(
     # Otherwise try direct video_id resolution
     try:
         return resolve_video_url(
-            video_id, request, max_retries, output_relpath=requested_output_relpath(request)
+            video_id, request, max_retries, output_relpath=(video_output_relpath(output_series, request.values.get("episode", ep)) if output_series else requested_output_relpath(request))
         )
     except Exception as exc:
         # If direct resolution failed, check whether video_id is a series_id
@@ -423,7 +408,7 @@ def handle_video_request(
                 actual_vid = series_info["vid_list"][idx]
                 res = resolve_video_url(
                     actual_vid, request, max_retries,
-                    output_relpath=video_output_relpath(series_info.get("title", ""), idx + 1),
+                    output_relpath=video_output_relpath(output_series or series_info.get("title", ""), idx + 1),
                 )
                 res["pic"] = series_info.get("cover") or res.get("pic", "")
                 res["series_name"] = series_info.get("title", "")

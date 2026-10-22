@@ -27,3 +27,26 @@ class SubtitleReviewTests(unittest.TestCase):
         with subtitles._lock:
             response=self.save([{'start_time':2,'end_time':3,'text':'a'}])
         self.assertEqual(response.status_code,409);self.assertEqual(self.srt.read_bytes(),self.original)
+
+    def test_playback_track_is_vtt_and_does_not_change_srt(self):
+        response=self.client.get('/api/subtitles/track?url=/src/episode.mp4')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.mimetype,'text/vtt')
+        self.assertTrue(response.data.startswith(b'WEBVTT'))
+        self.assertIn('你好',response.get_data(as_text=True))
+        self.assertEqual(response.headers['Cache-Control'],'no-store')
+        self.assertEqual(self.srt.read_bytes(),self.original)
+    def test_track_rejects_linked_and_oversized_subtitles(self):
+        external=Path(self.temp.name)/'other.srt';external.write_bytes(self.original)
+        self.srt.unlink();self.srt.symlink_to(external)
+        self.assertEqual(self.client.get('/api/subtitles/track?url=/src/episode.mp4').status_code,404)
+        self.srt.unlink();self.srt.write_bytes(b'x'*(5*1024*1024+1))
+        self.assertEqual(self.client.get('/api/subtitles/track?url=/src/episode.mp4').status_code,400)
+    def test_track_reads_last_saved_file_while_generation_runs(self):
+        import subtitles
+        with subtitles._lock:
+            response=self.client.get('/api/subtitles/track?url=/src/episode.mp4')
+        self.assertEqual(response.status_code,200)
+    def test_track_requires_resolved_video(self):
+        with patch.object(backend,'local_video_path',return_value=None):
+            self.assertEqual(self.client.get('/api/subtitles/track?url=/etc/passwd').status_code,404)

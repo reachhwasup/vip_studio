@@ -78,7 +78,7 @@ class DownloadPathTests(unittest.TestCase):
         with self.client.get(url) as response:
             self.assertEqual(response.data, b'video')
         subtitle = video.with_suffix('.srt')
-        def create(path, ffmpeg):
+        def create(path, ffmpeg, report=None):
             self.assertEqual(path, video)
             subtitle.write_text('captions')
             return subtitle, 'picture'
@@ -96,7 +96,7 @@ class DownloadPathTests(unittest.TestCase):
     def test_video_pipeline_uses_selected_folder_without_cleanup(self):
         folder = self.save_folder('videos')
         parser = backend.parser_module
-        with patch.object(parser.subprocess, 'Popen') as process, patch.object(parser, 'schedule_video_cleanup') as cleanup:
+        with patch.object(parser.subprocess, 'Popen') as process:
             process.return_value.stdout = []
             def finish_download():
                 Path(process.call_args.args[0][-1]).write_bytes(b'completed video')
@@ -106,7 +106,6 @@ class DownloadPathTests(unittest.TestCase):
             self.assertEqual((folder / 'Drama/Episode 001.mp4').read_bytes(), b'completed video')
             self.assertFalse(Path(process.call_args.args[0][-1]).exists())
             self.assertIn('/downloads/' + parser.download_root_key(folder) + '/', url)
-            cleanup.assert_not_called()
 
 
 if __name__ == '__main__':

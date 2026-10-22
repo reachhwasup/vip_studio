@@ -9,7 +9,10 @@ for (name, size) in [("icon_16x16.png",16),("icon_16x16@2x.png",32),("icon_32x32
  let shape=NSBezierPath(roundedRect:rect,xRadius:n*0.19,yRadius:n*0.19)
  let gradient=NSGradient(starting:NSColor(red:0.13,green:0.33,blue:0.87,alpha:1),ending:NSColor(red:0.33,green:0.66,blue:1,alpha:1))!
  gradient.draw(in:shape,angle:70)
- let play=NSBezierPath();play.move(to:NSPoint(x:n*0.40,y:n*0.30));play.line(to:NSPoint(x:n*0.72,y:n*0.50));play.line(to:NSPoint(x:n*0.40,y:n*0.70));play.close();NSColor.white.setFill();play.fill()
+ let text = "VIP" as NSString
+ let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: n * 0.34, weight: .heavy), .foregroundColor: NSColor.white]
+ let textSize = text.size(withAttributes: attrs)
+ text.draw(at: NSPoint(x: (n-textSize.width)/2, y: (n-textSize.height)/2), withAttributes: attrs)
  NSGraphicsContext.restoreGraphicsState()
  try rep.representation(using:.png,properties:[:])!.write(to:folder.appendingPathComponent(name))
 }

@@ -2,6 +2,7 @@
 import hashlib
 import json
 import plistlib
+import shutil
 import subprocess
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -34,14 +35,16 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'Signed in-app updates through GitHub Releases. Subtitle review, native completion notifications, downloads and your local library.'
+    ET.SubElement(item, 'description').text = 'Correct subtitles that gradually run ahead of or behind the video with stretch/compress timing, video duration comparison, fixed delay adjustments, reset and undo.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)
     # Signed feed as well as signed archives; Sparkle verifies the downloaded app.
     subprocess.run([str(signer), '--account', ACCOUNT, str(feed_path)], check=True)
     (output / 'latest.json').write_text(json.dumps({'version': version, 'platform': 'macos-arm64', 'download_url': f'{REPO}/releases/download/v{version}/VIP-Studio-{version}-macos-arm64.dmg'}, indent=2)+'\n')
-    (output / 'SHA256SUMS.txt').write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + '  ' + archive.name + '\n')
+    dmg = output / f'VIP-Studio-{version}-macos-arm64.dmg'
+    shutil.copy2(DIST / 'VIP Studio-macOS-AppleSilicon.dmg', dmg)
+    (output / 'SHA256SUMS.txt').write_text(''.join(hashlib.sha256(asset.read_bytes()).hexdigest() + '  ' + asset.name + '\n' for asset in (archive, dmg)))
     print('Signed release assets:', output)
 
 

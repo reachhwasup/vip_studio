@@ -1,7 +1,6 @@
 # -*- encoding: utf-8 -*-
 import hashlib
 import json
-import random
 import time
 from urllib.parse import urlencode, unquote
 

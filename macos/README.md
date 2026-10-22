@@ -14,6 +14,14 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 ## Features
 
+- Library resumes unfinished episodes and remembers the last 500 playback positions on this device. Start over replays an episode. Playback supports saved SRT captions, speed controls, previous/next episodes and opt-in automatic next episode.
+- Library filters include Continue watching and Missing subtitles, with sorting by date, title or episode count.
+- Subtitle generation checks on-screen captions plus local speech in Auto mode. Audio-only and picture-only methods are available; the Library remembers method and language. Conflicting speech suggestions remain available in Review & edit.
+- Subtitle editing includes Undo/Redo for the current session. Temporary connection failures during generation are retried; restarting the app may lose in-memory job tracking, so refresh Library to check the saved SRT.
+- Download Details shows subtitle/poster warnings. Clear all is unavailable while download workers are active.
+
+- Subtitle import and review can stretch/compress timings to correct gradual drift, compare against video duration, and adjust fixed delays. Imported timings can be reset; review edits support Undo. Timing correction is manual.
+
 - Library → episode → Review & edit: edit caption text/speaker/timing, shift captions, and preview next to the video. Saves create backups and reject overlapping times or stale changes.
 - Settings → Mac app: enable macOS completion notifications and send a test notification.
 - In-app signed updates hosted at `https://github.com/reachhwasup/vip_studio/releases/latest/download/appcast.xml`.
@@ -24,7 +32,7 @@ On an Apple Silicon Mac with Xcode command-line tools, Python 3.11 and FFmpeg:
 
 ```sh
 python3.11 -m venv macos/.venv
-macos/.venv/bin/pip install -r 短剧下载神器开源版源码/requirements.txt pyinstaller
+macos/.venv/bin/pip install -r 源码_开源版/requirements.txt pyinstaller
 macos/.venv/bin/python macos/build.py
 ```
 

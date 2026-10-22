@@ -5,7 +5,7 @@ Two methods, both running locally (nothing is uploaded):
 1. Picture (preferred, macOS): Hongguo videos have their subtitles drawn into the picture.
    Frames are sampled and read with the system's text recognition (subtitle_ocr.swift),
    to recover the displayed text; recognition and sampled timing can be imperfect.
-2. Audio (fallback): speech recognition with whisper.cpp, for videos without drawn-in
+2. Audio (automatic gap recovery or audio-only): speech recognition with whisper.cpp, for videos without drawn-in
    subtitles. Timing and wording are approximate.
 
 Environment overrides:
@@ -14,6 +14,7 @@ Environment overrides:
   WHISPER_VAD    path to the silero VAD model   (default: ~/.cache/whisper-cpp/ggml-silero-v5.1.2.bin)
 """
 import collections
+import re
 import uuid
 from subtitle_formats import import_subtitles, normalize_segments, export_subtitles
 import unicodedata
@@ -31,13 +32,14 @@ _WHISPER_DIR = Path.home() / ".cache" / "whisper-cpp"
 MODEL_PATH = Path(os.getenv("WHISPER_MODEL", str(_WHISPER_DIR / "ggml-large-v3-turbo.bin")))
 VAD_MODEL_PATH = Path(os.getenv("WHISPER_VAD", str(_WHISPER_DIR / "ggml-silero-v5.1.2.bin")))
 # Steers the model towards punctuated Simplified Chinese.
-PROMPT = "以下是普通话的句子，使用简体中文。"
 
 OCR_SOURCE = Path(__file__).resolve().parent / "subtitle_ocr.swift"
 OCR_BINARY = Path.home() / ".cache" / "short-drama-downloader" / "subtitle_ocr"
-OCR_FPS = 8  # frames read per second of video; timing is accurate to about 1/OCR_FPS seconds
+OCR_FPS = 8  # frames read per second of video; a caption's start and end are accurate to about 1/(2*OCR_FPS) seconds
+OCR_DROPOUT = 0.4  # seconds a caption may go unread (a flash, a fade, a missed short word) without being split in two
 OCR_STACK = 1  # Read each frame separately: stacking can hide short captions from Vision.
 OCR_WIDTH = 1280  # frames wider than this are scaled down before reading; small text needs the pixels
+OCR_CENTRE = 0.4  # middle share of the strip read again when nothing was found: a lone word is missed in a wide picture
 PROBE_TOP = 0.45  # the probe pass looks for the subtitle row in the picture below this height
 MIN_CUES_PER_MINUTE = 3  # fewer than this from the picture means there are no drawn-in subtitles
 
@@ -86,11 +88,12 @@ def _read_frames(
 ) -> list:
     """Sample frames, keep the horizontal strip [top, top + height] of the picture, and read its text.
 
-    Returns one record per sampled frame, in order (frame i shows the picture at i / fps), each
-    {"lines": [...]} with boxes as fractions of the strip. Strips are stacked `stack` to an image.
+    Returns one record per sampled frame, in order, each {"lines": [...]} with boxes as fractions of
+    the strip. Frame i shows the picture at i / fps: rounding up makes ffmpeg keep the last source
+    frame at or before that instant. Strips are stacked `stack` to an image.
     """
     folder.mkdir()
-    strip = f"fps={fps}:round=down,crop=iw:ih*{height:.4f}:0:ih*{top:.4f},scale='min(iw,{width})':-2,tile=1x{stack}"
+    strip = f"fps={fps}:round=up,crop=iw:ih*{height:.4f}:0:ih*{top:.4f},scale='min(iw,{width})':-2,tile=1x{stack}"
     _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path), "-vf", strip, "-q:v", "4", str(folder / "%06d.jpg")])
     frames = []
     for output in _run([helper, str(folder)], capture=True).splitlines():
@@ -102,6 +105,35 @@ def _read_frames(
             cells[cell]["lines"].append(dict(line, y=line["y"] * stack - cell, h=line["h"] * stack))
         frames += cells
     return frames
+
+
+def _reread_centre(helper: str, video_path: Path, ffmpeg_bin: str, fps: float, top: float, height: float, folder: Path, frames: list) -> None:
+    """Read the middle of the strip again in frames where no centred text was found.
+
+    Text recognition overlooks a one- or two-character caption in a wide picture for several
+    frames, which makes short captions start late, end early or go missing. It reads them when
+    given only the middle of the strip. Readings are added to `frames` in whole-strip fractions.
+    """
+    centred = lambda line: abs(line["x"] + line["w"] / 2 - 0.5) < 0.25
+    empty = {i for i, frame in enumerate(frames) if not any(centred(line) for line in frame["lines"])}
+    if not empty:
+        return
+    folder.mkdir()
+    left = (1 - OCR_CENTRE) / 2
+    crop = f"fps={fps}:round=up,crop=iw*{OCR_CENTRE}:ih*{height:.4f}:iw*{left}:ih*{top:.4f}"
+    _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path), "-vf", crop, "-q:v", "4", str(folder / "%06d.jpg")])
+    for image in folder.glob("*.jpg"):
+        if int(image.stem) - 1 not in empty:
+            image.unlink()
+    for output in _run([helper, str(folder)], capture=True).splitlines():
+        if not output.strip():
+            continue
+        record = json.loads(output)
+        index = int(Path(record["file"]).stem) - 1
+        for line in record["lines"]:
+            # Text running off either side is the middle of a longer line, not a short caption.
+            if index < len(frames) and line["x"] > 0.04 and line["x"] + line["w"] < 0.96:
+                frames[index]["lines"].append(dict(line, x=left + line["x"] * OCR_CENTRE, w=line["w"] * OCR_CENTRE))
 
 
 def _dialogue_lines(records: list, min_conf: float = 0.5, fps: float = 0.5) -> list:
@@ -130,52 +162,110 @@ def _subtitle_strip(records: list) -> tuple:
     return top, bottom - top
 
 
+def _caption_rows(lines: list) -> list:
+    """Keep the lines on the caption row; drop signs, badges and other text that is part of the scene.
+
+    Captions keep one size, one centre and one row (two for wrapped captions) through a video.
+    Text in the scene that drifts into the strip is a different size, off-centre or off that row.
+    """
+    sure = [line for _, line in lines if line["conf"] >= 0.5] or [line for _, line in lines]
+    if len(sure) < 8:
+        return lines
+    middle = lambda values: sorted(values)[len(values) // 2]
+    across = lambda line: line["x"] + line["w"] / 2
+    down = lambda line: line["y"] + line["h"] / 2
+    height = middle([line["h"] for line in sure])
+    sized = lambda line: 0.6 * height <= line["h"] <= 1.6 * height
+    bins = collections.Counter(round(down(line) / (height / 2)) for line in sure if sized(line))
+    main, most = bins.most_common(1)[0]
+    on_row = [line for line in sure if sized(line) and abs(down(line) / (height / 2) - main) <= 1]
+    centre, row = middle([across(line) for line in on_row]), middle([down(line) for line in on_row])
+    # A second row counts only when it is the next line up or down and used regularly.
+    rows = [row] + [b * height / 2 for b, count in bins.items() if 0.8 * height <= abs(b * height / 2 - row) <= 1.6 * height and count >= 0.2 * most]
+    return [
+        (i, line) for i, line in lines
+        if sized(line) and abs(across(line) - centre) <= 0.1 and any(abs(down(line) - r) <= 0.5 * height for r in rows)
+    ]
+
+
+def _content(text: str) -> str:
+    return ''.join(c for c in text if not c.isspace() and not unicodedata.category(c).startswith('P'))
+
+
 def _same_line(a: str, b: str) -> bool:
-    # Similar-looking sentences can have opposite meanings (我喜欢你 / 我不喜欢你).
     # Only ignore spacing and punctuation, never differing letters or characters.
-    def content(text):
-        return ''.join(c for c in text if not c.isspace() and not unicodedata.category(c).startswith('P'))
-    return a == b or bool(content(a)) and content(a) == content(b)
+    return a == b or bool(_content(a)) and _content(a) == _content(b)
+
+
+def _same_caption(a: str, b: str) -> bool:
+    """Two readings of one caption: the same line, or the same line with a character misread.
+
+    A caption on screen is sometimes read differently from frame to frame (去三吧 / 去兰吧), with
+    一 taken for a dash, or with a stray mark from the picture at either end. The sentence keeps
+    its length when that happens, so a different length is a different sentence
+    (我喜欢你 / 我不喜欢你) and is kept. Numbers are never treated as misreadings (还有3天 / 还有2天).
+    """
+    if _same_line(a, b):
+        return True
+    a, b = (_content(re.sub(r'[-－—–─]', '一', text)) for text in (a, b))
+    if a == b:
+        return True
+    if len(a) != len(b):
+        # A letter or symbol or two picked up beside a Chinese caption is not part of it.
+        short, long = sorted((a, b), key=len)
+        extra = long[:-len(short)] if long.endswith(short) else long[len(short):] if long.startswith(short) else ''
+        return len(short) >= 3 and 0 < len(extra) <= 2 and extra.isascii() and not extra.isdigit() and not short.isascii()
+    if len(a) < 3:
+        return False
+    differing = [(x, y) for x, y in zip(a, b) if x != y]
+    return len(differing) <= max(1, len(a) // 8) and not any(x.isdigit() or y.isdigit() for x, y in differing)
 
 
 def _cues_from_frames(records: list, fps: float, min_frames: int = 2) -> list:
-    """Merge runs of frames showing the same line into [start, end, text] cues."""
+    """Merge runs of frames showing the same caption into [start, end, text] cues."""
     per_frame = [[] for _ in records]
-    for i, line in _dialogue_lines(records, min_conf=0.3, fps=fps):
+    for i, line in _caption_rows(_dialogue_lines(records, min_conf=0.3, fps=fps)):
         per_frame[i].append(line)
     texts = [
         "".join(line["text"].strip() for line in sorted(frame, key=lambda l: (round(l["y"], 2), l["x"])))
         for frame in per_frame
     ]
-
     confidence = [min((line['conf'] for line in frame), default=0) for frame in per_frame]
-    runs = []  # [first frame, last frame, readings]
+    dropout = max(1, round(OCR_DROPOUT * fps))  # frames a caption may go unread inside one cue
+    # The reading seen most often wins; confidence only settles a tie.
+    reading = lambda run: max(run["seen"], key=lambda text: (run["seen"][text], run["sure"][text]))
+
+    runs = []
     for i, text in enumerate(texts):
         if not text:
             continue
-        # one unreadable frame inside a run does not end it
-        if runs and i - runs[-1][1] <= 2 and _same_line(runs[-1][2].most_common(1)[0][0], text):
-            runs[-1][1] = i
-            runs[-1][2][text] += 1
+        if runs and i - runs[-1]["last"] - 1 <= dropout and _same_caption(reading(runs[-1]), text):
+            run = runs[-1]
         else:
-            runs.append([i, i, collections.Counter({text: 1})])
+            run = {"first": i, "last": i, "seen": collections.Counter(), "sure": collections.Counter(), "best": 0}
+            runs.append(run)
+        run["last"] = i
+        run["seen"][text] += 1
+        run["sure"][text] += confidence[i]
+        run["best"] = max(run["best"], confidence[i])
 
-    cues = []
-    for first, last, readings in runs:
+    kept = []
+    for run in runs:
         # Keep brief, confidently recognised captions; reject isolated OCR noise.
-        observations = sum(readings.values())
-        best_confidence = max(confidence[first:last + 1])
-        if (observations >= min_frames and best_confidence >= 0.5) or observations >= max(3, min_frames) or best_confidence >= 0.85:
-            # Frame i shows the picture at i / fps: the line is on screen from `first`, gone by `last + 1`.
-            cues.append([first / fps, (last + 1) / fps, readings.most_common(1)[0][0]])
-    # Consolidate identical captions separated only by a brief OCR dropout.
-    merged = []
-    for cue in cues:
-        if merged and _same_line(merged[-1][2], cue[2]) and cue[0] - merged[-1][1] <= 2 / fps:
-            merged[-1][1] = cue[1]
+        observations = sum(run["seen"].values())
+        if not ((observations >= min_frames and run["best"] >= 0.5) or observations >= max(3, min_frames) or run["best"] >= 0.85):
+            continue
+        # The same caption again after rejected noise or a brief dropout is still one caption.
+        if kept and run["first"] - kept[-1]["last"] - 1 <= dropout and _same_caption(reading(kept[-1]), reading(run)):
+            kept[-1]["last"] = run["last"]
+            kept[-1]["seen"] += run["seen"]
+            kept[-1]["sure"] += run["sure"]
         else:
-            merged.append(cue)
-    cues = merged
+            kept.append(run)
+
+    # A caption first read in frame `first` appeared between that sample and the one before, and one
+    # last read in frame `last` went between that sample and the next: place each edge midway.
+    cues = [[max(0.0, (run["first"] - 0.5) / fps), (run["last"] + 0.5) / fps, reading(run)] for run in kept]
     for cue, following in zip(cues, cues[1:]):
         cue[1] = min(cue[1], following[0])
     return cues
@@ -186,6 +276,7 @@ def _subtitles_from_picture(video_path: Path, ffmpeg_bin: str, tmp: Path) -> lis
     if not helper:
         return []
     series = video_path.parent
+    best_cues = []
     # Re-detect each episode: subtitle placement can change within a series.
     for attempt in ("probed", "cached"):
         strip = _strip_cache.get(series) if attempt == "cached" else None
@@ -201,13 +292,16 @@ def _subtitles_from_picture(video_path: Path, ffmpeg_bin: str, tmp: Path) -> lis
             strip = (PROBE_TOP + top * area, height * area)
         # Read just that strip, densely.
         frames = _read_frames(helper, video_path, ffmpeg_bin, OCR_FPS, strip[0], strip[1], tmp / f"frames_{attempt}")
+        _reread_centre(helper, video_path, ffmpeg_bin, OCR_FPS, strip[0], strip[1], tmp / f"centre_{attempt}", frames)
         cues = _cues_from_frames(frames, OCR_FPS)
+        if len(cues) > len(best_cues):
+            best_cues = cues
         minutes = len(frames) / OCR_FPS / 60
         if len(cues) >= MIN_CUES_PER_MINUTE * minutes:
             _strip_cache[series] = strip
             return cues
         _strip_cache.pop(series, None)  # the remembered position did not work for this episode; search again
-    return []
+    return best_cues
 
 
 def _srt_time(seconds: float) -> str:
@@ -232,14 +326,14 @@ def _whisper_missing() -> str:
     return ""
 
 
-def _subtitles_from_audio(video_path: Path, ffmpeg_bin: str, tmp: Path, srt_path: Path) -> None:
+def _subtitles_from_audio(video_path: Path, ffmpeg_bin: str, tmp: Path, srt_path: Path, language: str = "zh") -> None:
     # whisper.cpp wants 16 kHz mono PCM.
     wav_path = tmp / "audio.wav"
     _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path),
           "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav_path)])
 
     out_base = tmp / "subtitles"
-    command = [WHISPER_BIN, "-m", str(MODEL_PATH), "-f", str(wav_path), "-l", "zh", "--prompt", PROMPT,
+    command = [WHISPER_BIN, "-m", str(MODEL_PATH), "-f", str(wav_path), "-l", language,
                "-ml", "16", "-osrt", "-of", str(out_base), "-np"]
     if VAD_MODEL_PATH.is_file():
         # Voice detection keeps lines from starting during silence or music.
@@ -262,27 +356,81 @@ def unavailable_reason() -> str:
     return _whisper_missing()
 
 
-def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg") -> tuple:
-    """Generate and validate before atomically replacing the SRT; preserve a backup."""
+def merge_picture_and_speech(picture, speech):
+    """Keep OCR timings intact; add whole spoken cues only in uncovered intervals.
+
+    Partly overlapping speech is retained as a review candidate, not squeezed into
+    an arbitrary gap that could assign words to the wrong moment.
+    """
+    merged = [dict(cue, source='picture') for cue in picture]
+    added, review = [], []
+    for cue in speech:
+        overlaps = [x for x in merged if x['start_time'] < cue['end_time'] and x['end_time'] > cue['start_time']]
+        if not overlaps:
+            item = dict(cue, source='audio')
+            merged.append(item); added.append(item)
+        elif not any(_content(x['text']) == _content(cue['text']) for x in overlaps):
+            review.append(dict(cue, reason='Speech and on-screen captions overlap or disagree. Review against the video.'))
+    merged.sort(key=lambda x: (x['start_time'], x['end_time']))
+    return merged, added, review
+
+
+def capabilities():
+    reason = _whisper_missing()
+    return {'speech_available': not reason, 'speech_reason': reason, 'ocr_available': bool(_ocr_helper())}
+
+
+def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = 'auto',
+                     language: str = 'zh', report=None, progress=None) -> tuple:
+    """OCR plus speech gap recovery, or explicit OCR/audio; save only valid results."""
+    if mode not in ('auto', 'picture', 'audio') or language not in ('zh', 'en', 'auto'):
+        raise ValueError('Choose a supported subtitle mode and spoken language.')
+    report = report if report is not None else {}
+    report.update(warnings=[], audio_added=0, review_candidates=[], mode=mode, language=language)
+    progress = progress or (lambda stage: None)
     video_path = Path(video_path)
-    srt_path = video_path.with_suffix(".srt")
+    srt_path = video_path.with_suffix('.srt')
     with _lock, tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
-        generated = tmp / "generated.srt"
-        try:
-            cues = _subtitles_from_picture(video_path, ffmpeg_bin, tmp)
-        except Exception as exc:
-            print(f"[subtitles] reading the picture failed file={video_path.name} error={exc}")
-            cues = []
-        if cues:
-            _write_srt(cues, generated)
-            method = "picture"
-        else:
+        generated = tmp / 'generated.srt'
+        cues = []
+        if mode != 'audio':
+            progress('Reading on-screen captions')
+            try:
+                cues = _subtitles_from_picture(video_path, ffmpeg_bin, tmp)
+            except Exception:
+                report['warnings'].append('On-screen caption recognition failed; speech recognition will be tried in automatic mode.')
+        picture = normalize_segments([{'start_time': a, 'end_time': b, 'text': text} for a, b, text in cues])
+        speech = []
+        if mode != 'picture':
             reason = _whisper_missing()
             if reason:
-                raise RuntimeError(f"no subtitles were found in the picture, and speech recognition is unavailable: {reason}")
-            _subtitles_from_audio(video_path, ffmpeg_bin, tmp, generated)
-            method = "audio"
+                if not picture:
+                    raise RuntimeError('Speech recognition is unavailable: ' + reason)
+                report['warnings'].append('Audio was not checked: ' + reason + '. Missing spoken captions may remain.')
+            else:
+                progress('Transcribing speech locally')
+                try:
+                    audio_path = tmp / 'speech.srt'
+                    _subtitles_from_audio(video_path, ffmpeg_bin, tmp, audio_path, language=language)
+                    speech = import_subtitles(audio_path.read_bytes(), audio_path.name)['segments']
+                except Exception as exc:
+                    if not picture:
+                        raise
+                    report['warnings'].append('Speech transcription failed; kept the on-screen captions. ' + str(exc))
+        progress('Checking and combining captions')
+        if picture and speech:
+            combined, added, review = merge_picture_and_speech(picture, speech)
+            report.update(audio_added=len(added), review_candidates=review)
+            method = 'hybrid'
+        elif picture:
+            combined = [dict(x, source='picture') for x in picture]; method = 'picture'
+        else:
+            combined = [dict(x, source='audio') for x in speech]; method = 'audio'
+        if not combined:
+            raise RuntimeError('No usable dialogue was recognised; the existing subtitles were kept.')
+        report.update(picture_captions=len(picture), speech_captions=len(speech), method=method)
+        generated.write_text(export_subtitles(combined, 'srt'), encoding='utf-8')
         parsed = import_subtitles(generated.read_bytes(), generated.name)
         if not parsed['segments']:
             raise RuntimeError("No usable captions were found; the existing subtitle file was kept.")
@@ -295,4 +443,14 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg") -> tuple:
             os.replace(staged, srt_path)
         finally:
             staged.unlink(missing_ok=True)
+        # Keep source text, provenance and disputed speech for review/translation.
+        transcript = video_path.with_suffix('.transcript.json')
+        metadata_tmp = transcript.with_name('.' + transcript.name + '.' + uuid.uuid4().hex + '.tmp')
+        try:
+            metadata_tmp.write_text(json.dumps({'segments': combined, 'analysis': report}, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(metadata_tmp, transcript)
+        except OSError:
+            report['warnings'].append('The SRT was saved, but its review report could not be saved.')
+        finally:
+            metadata_tmp.unlink(missing_ok=True)
         return srt_path, method

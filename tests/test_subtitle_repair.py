@@ -6,6 +6,11 @@ import app as backend
 import subtitles
 
 class SubtitleRepairTests(unittest.TestCase):
+    def setUp(self):
+        self.speech_unavailable = patch.object(subtitles, '_whisper_missing', return_value='not installed in unit test')
+        self.speech_unavailable.start()
+        self.addCleanup(self.speech_unavailable.stop)
+
     def test_success_backs_up_existing_srt(self):
         with tempfile.TemporaryDirectory() as tmp:
             video=Path(tmp)/'episode.mp4';video.touch();srt=video.with_suffix('.srt');srt.write_text('original')

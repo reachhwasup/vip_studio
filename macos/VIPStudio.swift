@@ -98,7 +98,11 @@ final class StudioApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavi
         setTab('settings');
         window.webkit.messageHandlers.vipStudio.postMessage({type:'settings'});
         await new Promise(resolve => setTimeout(resolve, 600));
-        return {editorCaptions, nativeVersion: document.getElementById('desktopVersion')?.textContent,
+        const timingControls = ['subtitleTargetEnd', 'subtitleApplyTiming', 'subtitleResetTiming', 'reviewTargetEnd', 'reviewRetime'].every(id => !!document.getElementById(id));
+        const timingFunction = typeof window.retimeSubtitles === 'function';
+        const timingResult = timingFunction ? window.retimeSubtitles([{start_time: 1, end_time: 2, text: 'Test'}], 4) : [];
+        return {timingControls, timingFunction, timingCorrect: timingResult[0]?.start_time === 2 && timingResult[0]?.end_time === 4,
+          editorCaptions, nativeVersion: document.getElementById('desktopVersion')?.textContent,
           updateStatus: document.getElementById('desktopUpdateStatus')?.textContent,
           notificationStatus: document.getElementById('desktopNotificationStatus')?.textContent,
           title: document.title, tabs: document.querySelectorAll('.tab').length,

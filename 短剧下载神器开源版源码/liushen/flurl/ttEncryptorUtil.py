@@ -1,7 +1,7 @@
 import secrets
 import hashlib
 from Crypto.Cipher import AES  # pip install pycryptodome
-from Crypto.Util.Padding import pad, unpad
+from Crypto.Util.Padding import pad
 
 
 def generate_rand_number():
@@ -37,13 +37,6 @@ def get_aes_key_iv(rand_num):
     data = rand_num_hash + seeds
     key_iv_hash = sha512(data)
 
-    # print(f"rand_num:              {rand_num.hex()}")
-    # print(f"rand_num_hash:         {rand_num_hash.hex()}")
-    # print(f"seeds:                 {seeds.hex()}")
-    # print(f"rand_num_hash + seeds: {data.hex()}")
-    # print(f"key_iv_hash:           {key_iv_hash.hex()}")
-    # print(f"aes key:               {key_iv_hash[0:0x10].hex()}")
-    # print(f"aes iv:                {key_iv_hash[0x10:0x20].hex()}")
     return key_iv_hash[0:0x10], key_iv_hash[0x10:0x20]
 
 
@@ -69,33 +62,5 @@ def ttEncrypt(buff):
     aes_plaintext = buff_hash + buff
     aes_ciphertext = aes_128_cbc_encrypt(aes_plaintext, aes_key, aes_iv)
 
-    #print(f"plaintext:     {buff.hex()}")
-    #print(f"rand_number:   {rand_number.hex()}")
-    #print(f"buff hash:     {buff_hash.hex()}")
-    #print(f"aes_plaintext: {aes_plaintext.hex()}")
-    #print(f"ciphertext:    {aes_ciphertext.hex()}")
 
     return magic + rand_number + aes_ciphertext
-
-
-def main():
-    buff = b'aabbccddeeffgg'
-    result = ttEncrypt(buff)
-    # print(f"ttEncrypt: {result.hex()}")
-
-
-def test_aes():
-    buff = b"\x61\x02\xbe\x54\xa6\x2a\x73\xe7\x65\xba\x38\xc9\x87\x34\x09\xbd" + \
-           b"\xeb\xb6\xb0\xd3\x7e\xa0\x60\x40\x3d\x0c\x26\xfe\xa5\xeb\xb6\xba" + \
-           b"\x5a\x0c\x7f\x36\xec\xb7\x58\xc7\x7e\x19\x37\x50\x5f\xa8\x5b\x4e" + \
-           b"\x77\xce\x82\x7a\x70\x09\xd2\x2b\x2f\xaf\xc4\x68\x00\xd7\xa9\xff" + \
-           b"\x62\x69\x61\x6e\x66\x65\x6e\x67"
-    aes_key = b"\xe8\xaf\x6e\x91\xde\x99\x7e\xf0\xfa\xfb\xcd\xbe\x97\x73\xb2\xc5"
-    aes_iv = b"\x03\x7e\xed\x97\x4e\x1e\xc5\x19\xdc\xc2\xb4\x35\x5b\x26\xf0\x1b"
-    ciphertext = aes_128_cbc_encrypt(buff, aes_key, aes_iv)
-    print(f"ciphertext: {ciphertext.hex()}")
-
-
-if __name__ == "__main__":
-    main()
-    # test_aes()

@@ -14,6 +14,7 @@ Environment overrides:
   WHISPER_VAD    path to the silero VAD model   (default: ~/.cache/whisper-cpp/ggml-silero-v5.1.2.bin)
 """
 import collections
+import copy
 import re
 import uuid
 from subtitle_formats import import_subtitles, normalize_segments, export_subtitles
@@ -47,6 +48,20 @@ MIN_CUES_PER_MINUTE = 3  # fewer than this from the picture means there are no d
 _lock = threading.Lock()
 # Where the subtitles sit in each series' picture, so later episodes skip the search: folder -> (top, height).
 _strip_cache: dict = {}
+_analysis_cache: dict = {}
+
+
+def subtitle_analysis(video_path):
+    """Session-only review hints; never create a JSON sidecar. Caller holds _lock."""
+    video_path = Path(video_path)
+    saved = _analysis_cache.get(str(video_path.resolve()))
+    try:
+        if saved and saved[0] == video_path.with_suffix('.srt').stat().st_mtime_ns:
+            return copy.deepcopy(saved[1])
+    except OSError:
+        pass
+    return {}
+
 
 
 def _run(command: list, capture: bool = False) -> str:
@@ -443,14 +458,10 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
             os.replace(staged, srt_path)
         finally:
             staged.unlink(missing_ok=True)
-        # Keep source text, provenance and disputed speech for review/translation.
-        transcript = video_path.with_suffix('.transcript.json')
-        metadata_tmp = transcript.with_name('.' + transcript.name + '.' + uuid.uuid4().hex + '.tmp')
-        try:
-            metadata_tmp.write_text(json.dumps({'segments': combined, 'analysis': report}, ensure_ascii=False, indent=2), encoding='utf-8')
-            os.replace(metadata_tmp, transcript)
-        except OSError:
-            report['warnings'].append('The SRT was saved, but its review report could not be saved.')
-        finally:
-            metadata_tmp.unlink(missing_ok=True)
+        # Keep disputed speech available for review during this session, without
+        # adding a second subtitle file beside the user's video.
+        key = str(video_path.resolve())
+        if key not in _analysis_cache and len(_analysis_cache) >= 100:
+            _analysis_cache.pop(next(iter(_analysis_cache)))
+        _analysis_cache[key] = (srt_path.stat().st_mtime_ns, copy.deepcopy(report))
         return srt_path, method

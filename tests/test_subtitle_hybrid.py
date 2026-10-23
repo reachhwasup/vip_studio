@@ -24,14 +24,14 @@ class HybridTests(unittest.TestCase):
             with patch.object(subtitles,'_subtitles_from_picture',return_value=[[1,2,'原句']]),patch.object(subtitles,'_whisper_missing',return_value=''),patch.object(subtitles,'_subtitles_from_audio',side_effect=audio) as run:
                 path,method=subtitles.create_subtitles(video,report=report)
             run.assert_called_once();self.assertEqual(method,'hybrid');self.assertEqual(report['audio_added'],1)
-            self.assertIn('遗漏',path.read_text());self.assertTrue(video.with_suffix('.transcript.json').exists())
+            self.assertIn('遗漏',path.read_text());self.assertFalse(video.with_suffix('.transcript.json').exists());self.assertEqual(subtitles.subtitle_analysis(video)['audio_added'],1)
     def test_audio_only_skips_ocr_and_passes_language(self):
         with tempfile.TemporaryDirectory() as tmp:
             video=Path(tmp)/'ep.mp4';video.touch()
             def audio(video,ffmpeg,tmp,path,language):path.write_text('1\n00:00:01,000 --> 00:00:02,000\nHello\n')
             with patch.object(subtitles,'_subtitles_from_picture') as picture,patch.object(subtitles,'_whisper_missing',return_value=''),patch.object(subtitles,'_subtitles_from_audio',side_effect=audio) as run:
                 path,method=subtitles.create_subtitles(video,mode='audio',language='en')
-            picture.assert_not_called();self.assertEqual(run.call_args.kwargs['language'],'en');self.assertEqual(method,'audio')
+            picture.assert_not_called();self.assertEqual(run.call_args.kwargs['language'],'en');self.assertEqual(method,'audio');self.assertFalse(list(Path(tmp).glob('*.json')))
     def test_speech_failure_warns_but_preserves_usable_picture(self):
         with tempfile.TemporaryDirectory() as tmp:
             video=Path(tmp)/'ep.mp4';video.touch();report={}
@@ -41,3 +41,16 @@ class HybridTests(unittest.TestCase):
     def test_invalid_modes_rejected_before_queueing(self):
         r=app.app.test_client().post('/api/subtitles/regenerate',json={'url':'/src/ep.mp4','mode':'unknown'})
         self.assertEqual(r.status_code,400)
+
+    def test_picture_only_saves_srt_and_review_hints_without_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            video=Path(tmp)/'ep.mp4';video.touch()
+            with patch.object(subtitles,'_subtitles_from_picture',return_value=[[1,2,'原句']]):
+                path,method=subtitles.create_subtitles(video,mode='picture')
+            self.assertEqual(method,'picture');self.assertTrue(path.is_file())
+            self.assertFalse(list(Path(tmp).glob('*.json')))
+            self.assertEqual(subtitles.subtitle_analysis(video)['picture_captions'],1)
+            old=path.stat().st_mtime_ns
+            import os
+            os.utime(path,ns=(old+1000000,old+1000000))
+            self.assertEqual(subtitles.subtitle_analysis(video),{})

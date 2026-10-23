@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from flask import request, jsonify, Response
 from subtitle_formats import import_subtitles, export_subtitles
-from subtitles import _lock
+from subtitles import _lock, subtitle_analysis
 
 
 def revision(path):
@@ -59,9 +59,9 @@ def register_studio_features(app, local_video_path):
             current = revision(srt)
             if request.method == 'GET':
                 result = import_subtitles(srt.read_bytes(), srt.name)
-                analysis = {}
+                analysis = subtitle_analysis(video)
                 report_path = video.with_suffix('.transcript.json')
-                if report_path.is_file() and not report_path.is_symlink() and report_path.stat().st_size <= 10 * 1024 * 1024:
+                if not analysis and report_path.is_file() and not report_path.is_symlink() and report_path.stat().st_size <= 10 * 1024 * 1024 and report_path.stat().st_mtime_ns >= srt.stat().st_mtime_ns:
                     try:
                         metadata = json.loads(report_path.read_text(encoding='utf-8'))
                         analysis = metadata.get('analysis', {}) if isinstance(metadata, dict) else {}

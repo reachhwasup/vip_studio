@@ -54,10 +54,20 @@ func recognise(_ name: String) -> [[String: Any]] {
 
 var results = [[[String: Any]]](repeating: [], count: files.count)
 let lock = NSLock()
+var completed = 0
+func reportProgress(_ count: Int) {
+    let message = "VIP_OCR_PROGRESS \(count)/\(files.count)\n"
+    FileHandle.standardError.write(Data(message.utf8))
+}
+reportProgress(0)
 DispatchQueue.concurrentPerform(iterations: files.count) { index in
     let lines = recognise(files[index])
     lock.lock()
     results[index] = lines
+    completed += 1
+    if completed == files.count || completed % max(1, files.count / 100) == 0 {
+        reportProgress(completed)
+    }
     lock.unlock()
 }
 

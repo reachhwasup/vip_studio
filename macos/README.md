@@ -14,6 +14,8 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 ## Features
 
+- Subtitle progress bars in Downloads and Library show live image counts and percent for the active OCR pass, plus speech-engine progress. Waiting jobs stay at zero; preparation and saving use activity indicators.
+
 - If the saved download folder is missing, disconnected, or unwritable, the queue pauses with its episodes pending and opens the folder picker. Selecting a replacement saves it and resumes the queue; cancelling keeps the queue paused.
 
 - Continue / Episodes retries temporary website failures and can use the signed service endpoint or a saved episode list. Saved lists stay in app history; stale lists are labelled so newly released episodes are not mistaken for the complete current catalogue.

@@ -81,3 +81,12 @@ test('background subtitle status updates do not undo completed video downloads',
   assert.equal(tasks[2].subtitleStatus, 'unavailable');
   await context.pollDownloadSubtitles(); assert.equal(requestCount, 1);
 });
+test('OCR percent updates refresh an active job even when its stage stays the same', async () => {
+  const task = {status: 'done', url: '/src/1.mp4', subtitleJobId: 'job', subtitleStatus: 'running', subtitleStage: 'Reading on-screen captions', subtitleProgress: 25, msg: 'Download complete · Subtitles: Reading on-screen captions · 25%'};
+  let renders = 0;
+  const context = vm.createContext({tasks: [task], URL, setInterval() {}, renderTasks() {renders++;}, CustomEvent: class {}, window: {location: {href: 'http://localhost/'}, dispatchEvent() {}}, fetch: async () => ({ok:true}), vipReadJSON: async () => ({jobs:{job:{status:'running',stage:'Reading on-screen captions',progress:50,completed:100,total:200}}})});
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../源码_开源版/static/download-subtitles.js'), 'utf8'), context);
+  await context.pollDownloadSubtitles();
+  assert.equal(task.subtitleProgress,50);assert.equal(renders,1);assert.match(task.msg,/50%/);assert.match(task.msg,/100\/200 images/);
+  assert.equal(context.window.downloadSubtitleJobForURL('/src/1.mp4').total,200);
+});

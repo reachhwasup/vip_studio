@@ -15,6 +15,7 @@ Environment overrides:
 """
 import collections
 import copy
+from contextlib import contextmanager
 import re
 import uuid
 from subtitle_formats import import_subtitles, normalize_segments, export_subtitles
@@ -64,7 +65,63 @@ def subtitle_analysis(video_path):
 
 
 
+_progress_state = threading.local()
+
+
+@contextmanager
+def _progress_session(callback):
+    previous = getattr(_progress_state, 'callback', None)
+    _progress_state.callback = callback
+    try:
+        yield
+    finally:
+        _progress_state.callback = previous
+
+
+def _notify_progress(stage, percent=None, completed=None, total=None):
+    callback = getattr(_progress_state, 'callback', None)
+    if callback:
+        callback({'stage': stage, 'progress': percent, 'completed': completed, 'total': total})
+
+
+def _ocr_stage(command):
+    name = Path(command[1]).name
+    if name.startswith('probe'):
+        return 'Finding caption area'
+    if name.startswith('centre'):
+        return 'Checking missed captions'
+    if name.endswith('cached'):
+        return 'Rechecking on-screen captions'
+    return 'Reading on-screen captions'
+
+
 def _run(command: list, capture: bool = False) -> str:
+    streaming = getattr(_progress_state, 'callback', None) and (capture or '-pp' in command)
+    if streaming:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+        output, errors = [], collections.deque(maxlen=10)
+        for line in process.stdout:
+            ocr = re.match(r'VIP_OCR_PROGRESS ([0-9]+)/([0-9]+)', line.strip())
+            speech = re.search(r'progress\s*=\s*([0-9]+)%', line)
+            if ocr:
+                completed, total = map(int, ocr.groups())
+                if total > 0 and 0 <= completed <= total:
+                    _notify_progress(_ocr_stage(command), round(completed / total * 100, 1), completed, total)
+            elif '-pp' in command and speech:
+                _notify_progress('Transcribing speech locally', min(100, int(speech.group(1))))
+            elif capture and line.lstrip().startswith('{'):
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    errors.append(line.strip())
+                else:
+                    if isinstance(record, dict) and 'file' in record and isinstance(record.get('lines'), list):
+                        output.append(line)
+            else:
+                errors.append(line.strip())
+        if process.wait() != 0:
+            raise RuntimeError(f"{Path(command[0]).name} failed: {(errors[-1] if errors else 'no error output')[:200]}")
+        return ''.join(output)
     done = subprocess.run(
         command, stdout=subprocess.PIPE if capture else subprocess.DEVNULL, stderr=subprocess.PIPE,
         text=True, errors="replace",
@@ -109,6 +166,7 @@ def _read_frames(
     """
     folder.mkdir()
     strip = f"fps={fps}:round=up,crop=iw:ih*{height:.4f}:0:ih*{top:.4f},scale='min(iw,{width})':-2,tile=1x{stack}"
+    _notify_progress('Extracting video frames', None)
     _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path), "-vf", strip, "-q:v", "4", str(folder / "%06d.jpg")])
     frames = []
     for output in _run([helper, str(folder)], capture=True).splitlines():
@@ -136,6 +194,7 @@ def _reread_centre(helper: str, video_path: Path, ffmpeg_bin: str, fps: float, t
     folder.mkdir()
     left = (1 - OCR_CENTRE) / 2
     crop = f"fps={fps}:round=up,crop=iw*{OCR_CENTRE}:ih*{height:.4f}:iw*{left}:ih*{top:.4f}"
+    _notify_progress('Preparing a check for missed captions', None)
     _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path), "-vf", crop, "-q:v", "4", str(folder / "%06d.jpg")])
     for image in folder.glob("*.jpg"):
         if int(image.stem) - 1 not in empty:
@@ -344,15 +403,17 @@ def _whisper_missing() -> str:
 def _subtitles_from_audio(video_path: Path, ffmpeg_bin: str, tmp: Path, srt_path: Path, language: str = "zh") -> None:
     # whisper.cpp wants 16 kHz mono PCM.
     wav_path = tmp / "audio.wav"
+    _notify_progress('Preparing audio', None)
     _run([ffmpeg_bin, "-y", "-v", "error", "-i", str(video_path),
           "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav_path)])
 
     out_base = tmp / "subtitles"
     command = [WHISPER_BIN, "-m", str(MODEL_PATH), "-f", str(wav_path), "-l", language,
-               "-ml", "16", "-osrt", "-of", str(out_base), "-np"]
+               "-ml", "16", "-osrt", "-of", str(out_base), "-pp"]
     if VAD_MODEL_PATH.is_file():
         # Voice detection keeps lines from starting during silence or music.
         command += ["--vad", "--vad-model", str(VAD_MODEL_PATH)]
+    _notify_progress('Transcribing speech locally', 0)
     _run(command)
 
     produced = out_base.with_suffix(".srt")
@@ -405,7 +466,7 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
     progress = progress or (lambda stage: None)
     video_path = Path(video_path)
     srt_path = video_path.with_suffix('.srt')
-    with _lock, tempfile.TemporaryDirectory() as tmp_name:
+    with _lock, _progress_session(progress), tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
         generated = tmp / 'generated.srt'
         cues = []
@@ -449,6 +510,7 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
         parsed = import_subtitles(generated.read_bytes(), generated.name)
         if not parsed['segments']:
             raise RuntimeError("No usable captions were found; the existing subtitle file was kept.")
+        progress('Saving subtitle file')
         staged = srt_path.with_name('.' + srt_path.name + '.' + uuid.uuid4().hex + '.tmp')
         try:
             staged.write_text(export_subtitles(parsed['segments'], "srt"), encoding="utf-8")

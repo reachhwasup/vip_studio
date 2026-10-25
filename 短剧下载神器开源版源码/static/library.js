@@ -62,17 +62,23 @@
   el('restartLibraryEpisode').onclick = () => { pendingResume = null; video.currentTime = 0; saveProgress(true); el('libraryPlaybackStatus').textContent = 'Playing from the beginning.'; video.play().catch(() => {}); };
   video.addEventListener('ended', () => { saveProgress(true); if (el('libraryAutoplay').checked) moveEpisode(1); });
   function renderSubtitleStatus() {
-    const episode = selectedEpisode, job = episode && subtitleJobs.get(episode.url);
+    const episode = selectedEpisode, job = episode && (window.downloadSubtitleJobForURL?.(episode.url) || subtitleJobs.get(episode.url));
     const button = el('regenerateLibrarySubtitles'), link = el('librarySubtitleLink');
     const busy = job && ['queued', 'running', 'starting'].includes(job.status);
     button.disabled = !episode || !!busy;
     el('reviewLibrarySubtitles').disabled = !episode?.subtitle_url || !!busy;
     button.textContent = busy ? (job.status === 'running' ? (job.stage || 'Processing subtitles…') : 'Queued…') : episode && episode.subtitle_url ? 'Regenerate subtitles' : 'Create subtitles';
     const status = !episode ? 'Choose an episode.' : job?.status === 'error' ? job.error : job?.status === 'done' ? `${job.captions} captions saved · ${job.method === 'hybrid' ? `Captions + speech · ${job.audio_added || 0} gaps recovered · ${job.review_count || 0} speech lines to review` : job.method === 'picture' ? 'Read from video' : 'From speech recognition'}${job.warnings?.length ? ' · '+job.warnings.join(' ') : ''}` : busy ? (job.retrying ? 'Reconnecting to subtitle processing. Your job may still be running.' : 'Processing locally. You can keep browsing while this finishes.') : episode.subtitle_url ? 'SRT available for this episode.' : 'No subtitle file saved yet.';
-    el('librarySubtitleStatus').textContent = status;
+    const percent = Number.isFinite(job?.progress) ? Math.round(job.progress) : null;
+    el('librarySubtitleStatus').textContent = busy ? (job.status === 'queued' ? 'Waiting for subtitle worker…' : (job.stage || 'Processing subtitles…') + (percent !== null ? ` · ${percent}%` : '') + (job.total ? ` · ${job.completed}/${job.total} images` : '')) : status;
+    const progress = el('librarySubtitleProgress'); progress.hidden = !busy;
+    if (job?.status === 'queued') progress.value = 0;
+    else if (percent !== null && job?.status === 'running') progress.value = percent;
+    else progress.removeAttribute('value');
     link.hidden = !episode?.subtitle_url;
     if (episode?.subtitle_url) link.href = episode.subtitle_url + (episode.subtitle_url.includes('?') ? '&' : '?') + 'v=' + (job?.updated_at || Date.now());
   }
+  window.addEventListener('vip-subtitle-progress', event => { if (event.detail.job && selectedEpisode?.url === event.detail.url) {subtitleJobs.set(event.detail.url, event.detail.job); renderSubtitleStatus();} });
   function rememberSubtitleJobs() {
     try { localStorage.setItem('vip_subtitle_jobs', JSON.stringify(Array.from(subtitleJobs).filter(([, job]) => ['queued', 'running'].includes(job.status)))); } catch (_) {}
   }

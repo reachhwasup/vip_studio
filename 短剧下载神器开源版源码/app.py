@@ -1061,21 +1061,24 @@ SUBTITLE_REPAIR_POOL = ThreadPoolExecutor(max_workers=1)
 
 def run_subtitle_repair(job_id, video_path):
     with SUBTITLE_JOBS_LOCK:
-        SUBTITLE_JOBS[job_id]['status'] = 'running'
+        SUBTITLE_JOBS[job_id].update(status='running', stage='Preparing subtitles', progress=None)
     try:
         with SUBTITLE_JOBS_LOCK:
             options = dict(SUBTITLE_JOBS[job_id])
         def stage(text):
             with SUBTITLE_JOBS_LOCK:
-                SUBTITLE_JOBS[job_id]['stage'] = text
+                if isinstance(text, dict):
+                    SUBTITLE_JOBS[job_id].update({key: text.get(key) for key in ('stage', 'progress', 'completed', 'total')})
+                else:
+                    SUBTITLE_JOBS[job_id].update(stage=text, progress=None, completed=None, total=None)
         report = {}
         srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(),
             mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage)
         count = len(import_subtitles(srt.read_bytes(), srt.name)['segments'])
-        result = {'status': 'done', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'review_count': len(report.get('review_candidates', []))}
+        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'review_count': len(report.get('review_candidates', []))}
     except Exception as exc:
         app.logger.exception('Subtitle regeneration failed')
-        result = {'status': 'error', 'error': str(exc)}
+        result = {'status': 'error', 'progress': None, 'error': str(exc)}
     with SUBTITLE_JOBS_LOCK:
         SUBTITLE_JOBS[job_id].update(result)
 
@@ -1118,7 +1121,7 @@ def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False)
                     del SUBTITLE_JOBS[old_id]
                     break
         job_id = os.urandom(16).hex()
-        job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
+        job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'progress': None, 'stage': 'Waiting for subtitle worker', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
         SUBTITLE_JOBS[job_id] = job
         try:
             SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job_id, video)

@@ -19,7 +19,9 @@ def main():
     # A new installation saves videos outside the read-only application bundle.
     config = data / 'config.json'
     if not config.exists():
-        config.write_text(json.dumps({'download_path': str(Path.home() / 'Movies' / 'VIP Studio')}))
+        folder = Path.home() / 'Movies' / 'VIP Studio'
+        folder.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({'download_path': str(folder)}))
         config.chmod(0o600)
     import app
     @app.app.get('/api/desktop/activity')

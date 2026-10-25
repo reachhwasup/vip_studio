@@ -8,7 +8,7 @@ function harness(count = 9, parallel = 4, subtitles = false) {
   const pending = [], urls = [];
   const context = vm.createContext({
     tasks: Array.from({length: count}, (_, i) => ({id: String(i), title: 'Episode ' + i, status: 'pending'})),
-    running: false, activeWorkers: 0, queueStats: null, subtitleReady: subtitles,
+    checkDownloadFolder: async () => true, running: false, activeWorkers: 0, queueStats: null, subtitleReady: subtitles,
     subtitlesWanted: () => subtitles, values: new Map([['duanju_parallel', String(parallel)]]),
     localStorage: {getItem: key => context.values.get(key) ?? null},
     $: () => ({checked: false}), askNotifyPermission() {}, renderTasks() {}, toast() {},

@@ -15,6 +15,7 @@ import hashlib
 import binascii
 import subprocess
 import threading
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -87,6 +88,27 @@ def load_local_config() -> Dict[str, Any]:
 def get_download_dir() -> Path:
     configured = load_local_config().get("download_path", "")
     return Path(configured).expanduser().resolve() if configured else (get_runtime_base_dir() / "src").resolve()
+
+
+
+class DownloadFolderUnavailable(RuntimeError):
+    pass
+
+
+def require_download_dir():
+    folder = get_download_dir()
+    configured = bool(load_local_config().get('download_path'))
+    try:
+        if configured and not folder.is_dir():
+            raise DownloadFolderUnavailable('The download folder is missing or disconnected. Select your download folder again.')
+        if not configured:
+            folder.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=folder) as probe:
+            probe.write(b'folder check')
+            probe.flush()
+    except OSError:
+        raise DownloadFolderUnavailable('The download folder is unavailable or cannot be written to. Select your download folder again.') from None
+    return folder
 
 
 def download_root_key(directory: Path) -> str:
@@ -438,7 +460,7 @@ def handle_video_request(
         return resolve_video_url(
             video_id, request, max_retries, output_relpath=(video_output_relpath(output_series, request.values.get("episode", ep)) if output_series else requested_output_relpath(request))
         )
-    except DeviceConfigurationError:
+    except (DeviceConfigurationError, DownloadFolderUnavailable):
         raise
     except Exception as exc:
         # If direct resolution failed, check whether video_id is a series_id
@@ -530,6 +552,8 @@ def resolve_video_url(
                 output_relpath=output_relpath,
             )
             return result
+        except DownloadFolderUnavailable:
+            raise
         except Exception as exc:
             last_err = exc
             time.sleep(0.1)
@@ -710,6 +734,8 @@ def download_and_decrypt_video(
                                     local_url = future.result()
                                     if local_url:
                                         best_item["main_url"] = local_url
+                                except DownloadFolderUnavailable:
+                                    raise
                                 except Exception as exc:
                                     # Nothing was saved. Report that, rather than handing back the remote
                                     # address as though the download had finished.
@@ -768,12 +794,16 @@ def stream_copy_video_with_ffmpeg(
 ) -> str:
     """Let ffmpeg pull the remote MP4 directly and write a local playable file."""
     stream_start = time.perf_counter()
-    src_dir = get_download_dir()
-    src_dir.mkdir(parents=True, exist_ok=True)
+    src_dir = require_download_dir()
 
     filename = output_relpath or f"video_{time.time_ns()}.mp4"
     filepath = src_dir / filename
-    filepath.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if not src_dir.is_dir():
+            raise OSError('Download folder disconnected')
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        raise DownloadFolderUnavailable('The download folder is unavailable. Select your download folder again.') from None
 
     # Written under a hidden temporary name and renamed only when complete, so a download that is
     # cut short never looks like a finished episode (the app skips episodes already on disk).
@@ -819,9 +849,17 @@ def stream_copy_video_with_ffmpeg(
         elif line.startswith("progress="):
             set_progress(progress_key, "downloading", percent, size)
     if process.wait() != 0:
-        partial.unlink(missing_ok=True)
+        try:
+            partial.unlink(missing_ok=True)
+        except OSError:
+            raise DownloadFolderUnavailable('The download folder is unavailable. Select your download folder again.') from None
+        if not src_dir.is_dir():
+            raise DownloadFolderUnavailable('The download folder disconnected during transfer. Select your download folder again.')
         raise Exception(f"Failed to stream video with ffmpeg (exit code {process.returncode})")
-    os.replace(partial, filepath)
+    try:
+        os.replace(partial, filepath)
+    except OSError:
+        raise DownloadFolderUnavailable('The video could not be saved to the download folder. Select your download folder again.') from None
 
     stream_seconds = time.perf_counter() - stream_start
     print(f"[timing] stream_copy_seconds={stream_seconds:.3f}")

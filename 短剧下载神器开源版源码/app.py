@@ -222,7 +222,16 @@ def setup_hongguo_config():
 @app.route("/api/download-path", methods=["GET", "POST"])
 def download_path_setting():
     if request.method == "GET":
-        return jsonify({"download_path": str(parser_module.get_download_dir())})
+        folder = parser_module.get_download_dir()
+        available = folder.is_dir() and os.access(folder, os.W_OK)
+        error = ''
+        if request.args.get('check') == '1':
+            try:
+                parser_module.require_download_dir()
+                available = True
+            except parser_module.DownloadFolderUnavailable as exc:
+                available, error = False, str(exc)
+        return jsonify({"download_path": str(folder), "available": available, "error": error})
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get("download_path"), str):
         return jsonify({"error": "Enter a download folder path"}), 400
@@ -1346,6 +1355,8 @@ def hg():
     parser_module.PROGRESS_LOCAL.key = key
     parser_module.set_progress(key, "resolving")
     try:
+        if request.values.get('check_download_folder') == '1':
+            parser_module.require_download_dir()
         result = None
         gz_detail = gz360.detail(key) if gz360.identify(key) else None
         gz_episode = None
@@ -1414,6 +1425,8 @@ def hg():
         return jsonify(result)
     except DeviceConfigurationError as exc:
         return jsonify({"error": str(exc), "code": "device_configuration"}), 400
+    except parser_module.DownloadFolderUnavailable as exc:
+        return jsonify({"error": str(exc), "code": "download_folder_unavailable"}), 409
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     finally:

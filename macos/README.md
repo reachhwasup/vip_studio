@@ -22,6 +22,7 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 - Generated subtitles are saved as SRT without an extra transcript JSON file. Speech comparison suggestions stay available during the current app session.
 
+- Subtitles has its own tab: Processing queue shows shared Download/Library jobs and live OCR progress; Preferences controls automatic subtitle creation; Import & timing contains subtitle file preview, synchronization and export. To generate subtitles for a saved video, use Create from Library. Job history lasts for the current app session; SRT files remain with the saved videos.
 - Downloads → Episodes at once selects 1–4 simultaneous video downloads (three for new installations). The control stays in sync with Settings. Subtitles run in a separate queue and show progress on each saved video, so OCR and speech processing do not hold video download slots. Keep the app open for subtitle jobs; after a restart, check Library for saved SRT files or regenerate unfinished ones.
 
 - Settings → Device configuration → Set up Hongguo automatically requests numeric device and install IDs from the service and saves them locally. Mac serial numbers and hardware IDs are rejected. Invalid setup pauses the queue so remaining episodes can be retried after correcting the connection.

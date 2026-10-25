@@ -35,7 +35,7 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'A refreshed workspace with clearer navigation, readable controls, separate video and subtitle activity summaries, simpler queue actions, improved narrow-window layouts, and a visible explanation when an update is waiting for active work to finish.'
+    ET.SubElement(item, 'description').text = 'A separate Subtitles tab brings together the shared processing queue, real OCR progress, automatic subtitle preferences, and subtitle import and timing tools.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)

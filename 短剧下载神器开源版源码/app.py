@@ -1131,6 +1131,15 @@ def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False)
         return dict(job)
 
 
+@app.get('/api/subtitles/jobs')
+def subtitle_job_list():
+    """All shared worker jobs for the separate subtitle workspace, newest first."""
+    with SUBTITLE_JOBS_LOCK:
+        jobs = [{key: value for key, value in job.items() if key != 'key'}
+                for job in reversed(list(SUBTITLE_JOBS.values()))]
+    return jsonify(jobs=jobs)
+
+
 @app.get('/api/subtitles/status')
 def subtitle_batch_status():
     ids = request.args.get('ids', '').split(',')

@@ -3,7 +3,7 @@
   if (!bridge) return;
   const card = document.createElement('section'); card.id = 'desktopSettingsCard'; card.className = 'config';
   card.innerHTML = `<div class="setting-title"><span class="setting-icon">↻</span><div><span class="setting-kicker">Desktop preferences</span><h2>Mac app</h2></div></div><p id="desktopVersion" class="status">Loading app information…</p><div class="desktop-controls"><button id="desktopEnableNotifications" class="btn2">Enable notifications</button><button id="desktopTestNotification" class="btn2">Send test notification</button></div><p id="desktopNotificationStatus" class="status" role="status"></p><h3>App updates</h3><p class="hint">Connected to reachhwasup/vip_studio on GitHub. Updates are verified before installation. You choose when to install and restart.</p><div class="desktop-controls"><button id="desktopCheckUpdates" class="btn2">Check for updates</button><button id="desktopOpenReleases" class="btn2">View releases</button></div><p id="desktopUpdateStatus" class="status" role="status">Ready to check GitHub Releases.</p>`;
-  document.querySelector('.settings-stack').append(card);
+  document.querySelector('#settings .settings-stack').append(card);
   const el = id => document.getElementById(id), send = data => bridge.postMessage(data);
   window.addEventListener('vip-native-settings', event => {
     const data = event.detail; el('desktopVersion').textContent = 'VIP Studio ' + data.version + ' · Apple Silicon';

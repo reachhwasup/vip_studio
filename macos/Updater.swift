@@ -13,7 +13,7 @@ extension StudioApp: SPUUpdaterDelegate {
     }
     func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem, untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
         pendingUpdateInstall = installHandler
-        sendDesktopEvent("vip-native-update", ["message": "Update ready. Waiting for active downloads/subtitle jobs to finish and the subtitle editor to close before restarting.", "available": false])
+        sendDesktopEvent("vip-native-update", ["message": "Update ready. Waiting for active downloads/subtitle jobs to finish and the subtitle editor to close before restarting.", "available": false, "postponed": true])
         waitForSafeUpdate()
         return true
     }

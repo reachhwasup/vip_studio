@@ -35,7 +35,7 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'Continue downloading episodes during temporary website failures with a signed service fallback, saved episode lists, accurate connection error messages, and automatic folder reselection when the download destination is unavailable, and live OCR/speech progress bars.'
+    ET.SubElement(item, 'description').text = 'A refreshed workspace with clearer navigation, readable controls, separate video and subtitle activity summaries, simpler queue actions, improved narrow-window layouts, and a visible explanation when an update is waiting for active work to finish.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)

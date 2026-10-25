@@ -88,6 +88,7 @@
       const data = await vipReadJSON(response);
       if (!response.ok) { const error = new Error(data.error || 'Could not check subtitle status.'); error.status = response.status; throw error; }
       subtitleJobs.set(url, data); rememberSubtitleJobs();
+      window.dispatchEvent(new CustomEvent('vip-subtitle-progress', {detail: {url, job: data}}));
       if (data.status === 'done') {
         items.forEach(drama => drama.episodes.forEach(episode => { if (episode.url === url) episode.subtitle_url = data.subtitle_url; }));
         if (selectedEpisode?.url === url) { selectedEpisode.subtitle_url = data.subtitle_url; refreshTrack(); }

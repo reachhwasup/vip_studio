@@ -14,6 +14,8 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 ## Features
 
+- Continue / Episodes retries temporary website failures and can use the signed service endpoint or a saved episode list. Saved lists stay in app history; stale lists are labelled so newly released episodes are not mistaken for the complete current catalogue.
+
 - Generated subtitles are saved as SRT without an extra transcript JSON file. Speech comparison suggestions stay available during the current app session.
 
 - Downloads → Episodes at once selects 1–4 simultaneous video downloads (three for new installations). The control stays in sync with Settings. Subtitles run in a separate queue and show progress on each saved video, so OCR and speech processing do not hold video download slots. Keep the app open for subtitle jobs; after a restart, check Library for saved SRT files or regenerate unfinished ones.

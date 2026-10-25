@@ -272,77 +272,124 @@ def curl_request(
 # ─── Main endpoint (matching 1.go Handle / resolveVideoURL) ──────────────────
 
 _SERIES_CACHE: Dict[str, Dict[str, Any]] = {}
+SERIES_CACHE_SECONDS = 60
+
+
+class SeriesDetailUnavailable(RuntimeError):
+    """A connection/service failure is different from a missing drama."""
+
+
+def _saved_series_detail(sid):
+    try:
+        path = get_runtime_base_dir() / 'drama_history.json'
+        if path.stat().st_size > 20 * 1024 * 1024:
+            return None
+        history = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(history, list):
+            return None
+        entry = next((row for row in history if isinstance(row, dict) and row.get('series_id') == sid), {})
+        vids = entry.get('vid_list')
+        if not isinstance(vids, list) or not 1 <= len(vids) <= 5000 or not all(isinstance(vid, str) and re.fullmatch(r'[1-9][0-9]{0,29}', vid) for vid in vids):
+            return None
+        return {key: entry[key] for key in ('series_id', 'title', 'cover', 'intro', 'tags', 'cast', 'episode_text', 'first_visible_time', 'fetched_at', 'vid_list', 'total') if key in entry}
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+
+def _app_series_detail(sid):
+    """Use the service's signed episode endpoint when its website is unavailable."""
+    keys = get_device_keys()
+    url = build_video_model_url(keys['device_id'], keys['install_id']).replace('/multi_video_model/v1/', '/video_detail/v1/')
+    url, headers, body = sign_json_request_with_liushen(url, {'series_id': sid}, keys)
+    response = json.loads(curl_request(url, headers, body, 12))
+    detail = response.get('data', {}).get('video_data', {})
+    if str(detail.get('series_id_str') or detail.get('series_id')) != sid:
+        raise ValueError('The service did not return the requested drama')
+    rows = detail.get('video_list')
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 5000:
+        raise ValueError('The service returned no episode list')
+    rows = sorted(rows, key=lambda row: int(row['vid_index']))
+    vids = []
+    for index, row in enumerate(rows, 1):
+        vid = str(row.get('vid', ''))
+        if int(row['vid_index']) != index or not re.fullmatch(r'[1-9][0-9]{0,29}', vid) or (row.get('series_id') and str(row['series_id']) != sid):
+            raise ValueError('The service returned invalid episodes')
+        vids.append(vid)
+    if len(set(vids)) != len(vids) or int(detail.get('episode_cnt') or len(vids)) > len(vids):
+        raise ValueError('The service returned an incomplete episode list')
+    return {'series_id': sid, 'title': detail.get('series_title') or detail.get('series_name') or f'Drama_{sid}',
+            'cover': detail.get('series_cover', ''), 'intro': detail.get('series_intro', ''), 'tags': [], 'cast': [],
+            'episode_text': detail.get('episode_right_text', ''), 'total': len(vids), 'vid_list': vids, 'fetched_at': time.time()}
+
 
 def get_hongguo_series_detail(val: str) -> Optional[Dict[str, Any]]:
-    """
-    Extract series information from a Hongguo series URL or series_id.
-    Returns dict with {series_id, title, cover, total, vid_list} or None.
-    """
-    val = (val or "").strip()
-    if not val:
-        return None
-
-    sid = None
-    m = re.search(r"series_id=(\d+)", val)
-    if m:
-        sid = m.group(1)
-    elif val.isdigit() and len(val) >= 15:
-        sid = val
-    elif "hongguoduanju.com" in val:
-        m2 = re.search(r"/(\d+)", val)
-        if m2:
-            sid = m2.group(1)
-
+    """Read the latest episode list; retain saved lists across temporary outages."""
+    val = (val or '').strip()
+    match = re.search(r'series_id=([0-9]+)', val)
+    sid = match.group(1) if match else val if val.isdigit() and len(val) >= 15 else None
+    if not sid and 'hongguoduanju.com' in val:
+        match = re.search(r'/([0-9]+)', val)
+        sid = match.group(1) if match else None
     if not sid:
         return None
-
-    if sid in _SERIES_CACHE:
-        return _SERIES_CACHE[sid]
-
-    url = f"https://hongguoduanju.com/detail?series_id={sid}"
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
-        )
-    }
+    cached = _SERIES_CACHE.get(sid) or _saved_series_detail(sid)
     try:
-        resp = requests.get(url, headers=headers, timeout=12)
-        if resp.status_code != 200:
-            return None
-        idx = resp.text.find("_ROUTER_DATA = ")
-        if idx == -1:
-            return None
-        raw = resp.text[idx + len("_ROUTER_DATA = "):].strip()
-        data, _ = json.JSONDecoder().raw_decode(raw)
-        detail = data.get("loaderData", {}).get("detail_page", {}).get("seriesDetail", {})
-        vid_list = detail.get("vid_list", [])
-        if not vid_list:
-            return None
-
-        result = {
-            "series_id": sid,
-            "title": detail.get("series_name", "") or f"Drama_{sid}",
-            "cover": detail.get("series_cover", ""),
-            "intro": detail.get("series_intro", ""),
-            "tags": [x for x in detail.get("tags") or [] if isinstance(x, str)],
-            "cast": [
-                {"name": c.get("nickname", ""), "role": c.get("sub_title", "")}
-                for c in detail.get("celebrities") or []
-                if isinstance(c, dict) and c.get("nickname")
-            ],
-            "episode_text": detail.get("episode_right_text", ""),
-            "first_visible_time": detail.get("first_visible_time"),
-            "total": len(vid_list),
-            "vid_list": vid_list,
-        }
-        if len(_SERIES_CACHE) > 100:
-            _SERIES_CACHE.clear()
-        _SERIES_CACHE[sid] = result
-        return result
-    except Exception as exc:
-        print(f"[series_detail] parse failed: {exc}")
-        return None
+        fresh = cached and 0 <= time.time() - float(cached.get('fetched_at', 0)) < SERIES_CACHE_SECONDS
+    except (ValueError, TypeError):
+        fresh = False
+    if fresh:
+        return dict(cached)
+    url = f'https://hongguoduanju.com/detail?series_id={sid}'
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0 Safari/537.36'}
+    for attempt in range(2):
+        try:
+            request_url = url if attempt == 0 else url + '&source=history'
+            response = requests.get(request_url, headers=headers, timeout=(4, 8))
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            marker = re.search(r'_ROUTER_DATA\s*=\s*', response.text)
+            if not marker:
+                raise ValueError('Episode data was not included in the page')
+            data, _ = json.JSONDecoder().raw_decode(response.text[marker.end():])
+            detail = data.get('loaderData', {}).get('detail_page', {}).get('seriesDetail', {})
+            vids = detail.get('vid_list', [])
+            if not vids:
+                return None
+            if not isinstance(vids, list) or not all(isinstance(vid, str) and re.fullmatch(r'[1-9][0-9]{0,29}', vid) for vid in vids):
+                raise ValueError('Invalid episode list')
+            result = {
+                'series_id': sid, 'title': detail.get('series_name') or f'Drama_{sid}',
+                'cover': detail.get('series_cover', ''), 'intro': detail.get('series_intro', ''),
+                'tags': [tag for tag in detail.get('tags') or [] if isinstance(tag, str)],
+                'cast': [{'name': actor.get('nickname', ''), 'role': actor.get('sub_title', '')}
+                         for actor in detail.get('celebrities') or [] if isinstance(actor, dict) and actor.get('nickname')],
+                'episode_text': detail.get('episode_right_text', ''), 'first_visible_time': detail.get('first_visible_time'),
+                'total': len(vids), 'vid_list': vids, 'fetched_at': time.time(),
+            }
+            if len(_SERIES_CACHE) >= 100:
+                _SERIES_CACHE.pop(next(iter(_SERIES_CACHE)))
+            _SERIES_CACHE[sid] = result
+            return dict(result)
+        except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
+            if cached:
+                return dict(cached, stale=True)
+            # Rate limits and denied requests should not be retried immediately.
+            status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            if status not in (403, 429) and attempt == 1:
+                try:
+                    result = _app_series_detail(sid)
+                    if len(_SERIES_CACHE) >= 100:
+                        _SERIES_CACHE.pop(next(iter(_SERIES_CACHE)))
+                    _SERIES_CACHE[sid] = result
+                    return dict(result)
+                except (requests.RequestException, ValueError, RuntimeError, TypeError, KeyError, AttributeError):
+                    pass
+            if status in (403, 429) or attempt == 1:
+                raise SeriesDetailUnavailable('Could not reach Hongguo to load the episode list. Please retry shortly.') from None
+            time.sleep(0.25)
+    return None
 
 
 def handle_video_request(

@@ -834,7 +834,7 @@ def remember_drama(detail=None, series_id="", episode=None):
         if not detail and not old:
             return
         entry = dict(old, series_id=series_id, updated_at=time.time())
-        for key in ("title", "cover", "total"):
+        for key in ("title", "cover", "total", "vid_list", "intro", "tags", "cast", "episode_text", "first_visible_time", "fetched_at"):
             if detail.get(key):
                 entry[key] = detail[key]
         if episode is not None:
@@ -948,7 +948,10 @@ def api_episodes():
             return jsonify(public)
         except (ValueError, OSError) as exc:
             return jsonify({'error': str(exc), 'episodes': []}), 502
-    detail = parser_module.get_hongguo_series_detail(val)
+    try:
+        detail = parser_module.get_hongguo_series_detail(val)
+    except parser_module.SeriesDetailUnavailable as exc:
+        return jsonify({"error": str(exc), "episodes": []}), 502
     if not detail or not detail.get("vid_list"):
         return jsonify({"error": "Drama not found, or it has no episode list yet", "episodes": []}), 404
 
@@ -975,6 +978,7 @@ def api_episodes():
         app.logger.warning("Could not save drama history: %s", exc)
     return jsonify({
         "history_error": history_error,
+        "episode_warning": "Showing the saved episode list because Hongguo could not be reached. Newly released episodes may be missing; reopen this drama to retry." if detail.get('stale') else "",
         "series_id": detail["series_id"],
         "title": title,
         "cover": detail.get("cover", ""),

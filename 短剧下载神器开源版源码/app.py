@@ -1057,11 +1057,54 @@ register_studio_features(app, lambda url: local_video_path(url))
 SUBTITLE_JOBS = {}
 SUBTITLE_JOBS_LOCK = threading.Lock()
 SUBTITLE_REPAIR_POOL = ThreadPoolExecutor(max_workers=1)
+SUBTITLE_JOB_STORE = None
+
+
+def save_subtitle_job(job):
+    if SUBTITLE_JOB_STORE is not None:
+        SUBTITLE_JOB_STORE.save(job)
+
+
+def initialize_subtitle_jobs():
+    """Restore job IDs, options and unfinished work before serving requests."""
+    global SUBTITLE_JOB_STORE
+    from subtitle_jobs import SubtitleJobStore
+    store = SubtitleJobStore(parser_module.get_runtime_base_dir() / 'subtitle-jobs.sqlite3')
+    with SUBTITLE_JOBS_LOCK:
+        if SUBTITLE_JOB_STORE is not None:
+            return
+        SUBTITLE_JOB_STORE = store
+        for job in store.load():
+            if job['id'] in SUBTITLE_JOBS:
+                continue
+            SUBTITLE_JOBS[job['id']] = job
+            if job['status'] not in ('queued', 'running'):
+                continue
+            video = local_video_path(job.get('video_url', ''))
+            if video is None or str(video.resolve()) != job.get('key'):
+                job.update(status='error', progress=None, error='The saved video is unavailable. Select its download folder again, then retry from Library.')
+                save_subtitle_job(job)
+                continue
+            # An atomic SRT save may have completed immediately before the restart.
+            srt = video.with_suffix('.srt')
+            try:
+                finished = srt.is_file() and srt.stat().st_mtime_ns > job.get('original_srt_mtime_ns', 0)
+                captions = len(import_subtitles(srt.read_bytes(), srt.name)['segments']) if finished else 0
+            except (OSError, ValueError):
+                captions = 0
+            if captions:
+                job.update(status='done', progress=100, stage='Subtitles ready', captions=captions)
+            else:
+                job.update(status='queued', progress=None, completed=None, total=None, stage='Resuming after app restart')
+                SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job['id'], video)
+            save_subtitle_job(job)
+
 
 
 def run_subtitle_repair(job_id, video_path):
     with SUBTITLE_JOBS_LOCK:
         SUBTITLE_JOBS[job_id].update(status='running', stage='Preparing subtitles', progress=None)
+        save_subtitle_job(SUBTITLE_JOBS[job_id])
     try:
         with SUBTITLE_JOBS_LOCK:
             options = dict(SUBTITLE_JOBS[job_id])
@@ -1081,6 +1124,7 @@ def run_subtitle_repair(job_id, video_path):
         result = {'status': 'error', 'progress': None, 'error': str(exc)}
     with SUBTITLE_JOBS_LOCK:
         SUBTITLE_JOBS[job_id].update(result)
+        save_subtitle_job(SUBTITLE_JOBS[job_id])
 
 
 @app.route('/api/subtitles/regenerate', methods=['GET', 'POST'])
@@ -1107,7 +1151,7 @@ def subtitle_regenerate():
 
 def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False):
     """Downloads and Library share one OCR worker; video transfers never wait for it."""
-    key = str(video)
+    key = str(video.resolve())
     with SUBTITLE_JOBS_LOCK:
         for existing in SUBTITLE_JOBS.values():
             if existing['key'] == key and existing['status'] in ('queued', 'running'):
@@ -1119,16 +1163,55 @@ def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False)
             for old_id in list(SUBTITLE_JOBS):
                 if SUBTITLE_JOBS[old_id]['status'] in ('done', 'error'):
                     del SUBTITLE_JOBS[old_id]
+                    if SUBTITLE_JOB_STORE is not None:
+                        SUBTITLE_JOB_STORE.remove(old_id)
                     break
         job_id = os.urandom(16).hex()
-        job = {'id': job_id, 'key': key, 'title': video.stem, 'status': 'queued', 'progress': None, 'stage': 'Waiting for subtitle worker', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
+        job = {'id': job_id, 'key': key, 'video_url': url, 'created_at': time.time(), 'original_srt_mtime_ns': video.with_suffix('.srt').stat().st_mtime_ns if video.with_suffix('.srt').is_file() else 0, 'title': video.stem, 'status': 'queued', 'progress': None, 'stage': 'Waiting for subtitle worker', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
         SUBTITLE_JOBS[job_id] = job
         try:
+            save_subtitle_job(job)
             SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job_id, video)
         except Exception:
             del SUBTITLE_JOBS[job_id]
+            if SUBTITLE_JOB_STORE is not None:
+                SUBTITLE_JOB_STORE.remove(job_id)
             raise
         return dict(job)
+
+
+@app.post('/api/subtitles/reconcile')
+def subtitle_reconcile():
+    """Recover legacy download badges from actual SRT files and current jobs."""
+    payload = request.get_json(silent=True)
+    urls = payload.get('urls') if isinstance(payload, dict) else None
+    if not isinstance(urls, list) or len(urls) > 200 or any(not isinstance(url, str) for url in urls):
+        return jsonify(error='Check up to 200 saved videos at a time.'), 400
+    results = {}
+    with SUBTITLE_JOBS_LOCK:
+        known_jobs = list(SUBTITLE_JOBS.values())
+    for url in urls:
+        video = local_video_path(url)
+        if video is None:
+            results[url] = {'status': 'unavailable', 'error': 'Saved video unavailable. Check its download folder.'}
+            continue
+        matching = [job for job in known_jobs if job.get('key') == str(video.resolve())]
+        active = next((job for job in reversed(matching) if job['status'] in ('queued', 'running')), None)
+        if active:
+            results[url] = {key: value for key, value in active.items() if key != 'key'}
+        else:
+            srt = video.with_suffix('.srt')
+            try:
+                saved = bool(import_subtitles(srt.read_bytes(), srt.name)['segments']) if srt.is_file() else False
+            except (OSError, ValueError):
+                saved = False
+            if saved:
+                results[url] = {'status': 'done', 'subtitle_url': url.rsplit('.', 1)[0] + '.srt', 'progress': 100, 'stage': 'Subtitles ready'}
+            elif matching and matching[-1]['status'] == 'error':
+                results[url] = {key: value for key, value in matching[-1].items() if key != 'key'}
+            else:
+                results[url] = {'status': 'interrupted', 'stage': 'No saved subtitles found. Create them again from Library.'}
+    return jsonify(jobs=results)
 
 
 @app.get('/api/subtitles/jobs')
@@ -1469,4 +1552,5 @@ if __name__ == "__main__":
         threading.Thread(target=open_browser, daemon=True).start()
 
     print(f"Short Drama Downloader (open source edition): {url}")
+    initialize_subtitle_jobs()
     app.run(host="127.0.0.1", port=port, debug=os.getenv("FLASK_DEBUG", "0") == "1")

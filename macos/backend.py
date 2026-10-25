@@ -24,6 +24,7 @@ def main():
         config.write_text(json.dumps({'download_path': str(folder)}))
         config.chmod(0o600)
     import app
+    app.initialize_subtitle_jobs()
     @app.app.get('/api/desktop/activity')
     def desktop_activity():
         from flask import jsonify

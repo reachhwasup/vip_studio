@@ -66,7 +66,7 @@ test('parallel preference defaults to three and validates stored values', () => 
 test('background subtitle status updates do not undo completed video downloads', async () => {
   const tasks = [{id: '1', status: 'done', url: 'http://127.0.0.1:5056/src/1.mp4', subtitleJobId: 'a', subtitleStatus: 'queued', msg: 'Download complete · subtitles queued · cover saved'}, {id: '2', status: 'done', subtitleJobId: 'b', subtitleStatus: 'running', msg: 'Download complete'}, {id: '3', status: 'done', subtitleJobId: 'missing', subtitleStatus: 'queued', msg: 'Download complete'}];
   let requestCount = 0; const events = [];
-  const context = vm.createContext({tasks, setInterval() {}, renderTasks() {}, URL, CustomEvent: class {constructor(name, options) {this.detail = options.detail;}}, window: {location: {href: 'http://127.0.0.1:5056/'}, dispatchEvent(event) {events.push(event);}},
+  const context = vm.createContext({tasks, setInterval() {}, renderTasks() {}, URL, CustomEvent: class {constructor(name, options) {this.detail = options.detail;}}, window: {addEventListener() {}, location: {href: 'http://127.0.0.1:5056/'}, dispatchEvent(event) {events.push(event);}},
     fetch: async () => { requestCount++; return {ok: true}; },
     vipReadJSON: async () => ({jobs: {a: {status: 'done', subtitle_url: '/src/1.srt'}, b: {status: 'error', error: 'Recognition failed'}}}),
   });
@@ -84,9 +84,30 @@ test('background subtitle status updates do not undo completed video downloads',
 test('OCR percent updates refresh an active job even when its stage stays the same', async () => {
   const task = {status: 'done', url: '/src/1.mp4', subtitleJobId: 'job', subtitleStatus: 'running', subtitleStage: 'Reading on-screen captions', subtitleProgress: 25, msg: 'Download complete · Subtitles: Reading on-screen captions · 25%'};
   let renders = 0;
-  const context = vm.createContext({tasks: [task], URL, setInterval() {}, renderTasks() {renders++;}, CustomEvent: class {}, window: {location: {href: 'http://localhost/'}, dispatchEvent() {}}, fetch: async () => ({ok:true}), vipReadJSON: async () => ({jobs:{job:{status:'running',stage:'Reading on-screen captions',progress:50,completed:100,total:200}}})});
+  const context = vm.createContext({tasks: [task], URL, setInterval() {}, renderTasks() {renders++;}, CustomEvent: class {}, window: {addEventListener() {}, location: {href: 'http://localhost/'}, dispatchEvent() {}}, fetch: async () => ({ok:true}), vipReadJSON: async () => ({jobs:{job:{status:'running',stage:'Reading on-screen captions',progress:50,completed:100,total:200}}})});
   vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../源码_开源版/static/download-subtitles.js'), 'utf8'), context);
   await context.pollDownloadSubtitles();
   assert.equal(task.subtitleProgress,50);assert.equal(renders,1);assert.match(task.msg,/50%/);assert.match(task.msg,/100\/200 images/);
   assert.equal(context.window.downloadSubtitleJobForURL('/src/1.mp4').total,200);
+});
+test('legacy restart warning is replaced by the actual saved SRT status', async () => {
+  const task={status:'done',url:'/src/119.mp4',subtitleJobId:'lost',subtitleStatus:'unavailable',msg:'Download complete · Subtitles: check Library; processing status was lost after restart'};
+  const calls=[];
+  const context=vm.createContext({tasks:[task],URL,setInterval(){},renderTasks(){},CustomEvent:class{},window:{addEventListener(){},location:{href:'http://localhost/'},dispatchEvent(){}},
+    fetch:async(url,options)=>{calls.push({url,options});return {ok:true,url};},
+    vipReadJSON:async response=>response.url.includes('reconcile')?{jobs:{'/src/119.mp4':{status:'done',subtitle_url:'/src/119.srt',progress:100}}}:{jobs:{}}
+  });
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../源码_开源版/static/download-subtitles.js'),'utf8'),context);
+  await context.pollDownloadSubtitles();
+  assert.equal(task.status,'done');assert.equal(task.subtitleStatus,'done');assert.equal(task.subtitle,'/src/119.srt');
+  assert.equal(task.msg,'Download complete · Subtitles: ready');assert.equal(calls[1].options.method,'POST');
+});
+test('legacy download reconnects to a replacement active subtitle job by video URL', async () => {
+  const task={status:'done',url:'/src/120.mp4',subtitleJobId:'lost',subtitleStatus:'unavailable',msg:'Download complete'};
+  const context=vm.createContext({tasks:[task],URL,setInterval(){},renderTasks(){},CustomEvent:class{},window:{addEventListener(){},location:{href:'http://localhost/'},dispatchEvent(){}},
+    fetch:async url=>({ok:true,url}),vipReadJSON:async response=>response.url.includes('reconcile')?{jobs:{'/src/120.mp4':{id:'replacement',status:'running',stage:'Reading captions',progress:45}}}:{jobs:{}}
+  });
+  vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../源码_开源版/static/download-subtitles.js'),'utf8'),context);
+  await context.pollDownloadSubtitles();
+  assert.equal(task.subtitleJobId,'replacement');assert.equal(task.subtitleStatus,'running');assert.match(task.msg,/45%/);assert.equal(task.status,'done');
 });

@@ -152,19 +152,45 @@
     el('libraryEpisodeTitle').textContent = episode.title;
     el('libraryPlaybackStatus').textContent = '';
     el('libraryEpisodes').querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    if (button?.hidden) { el('playerEpisodeSearch').value = ''; filterPlayerEpisodes(); }
+    revealCurrentEpisode();
     video.play().catch(() => { el('libraryPlaybackStatus').textContent = 'Press Play to start. If this video cannot play in your browser, open its folder to use your video player.'; });
   }
+  function revealCurrentEpisode() {
+    const list = el('libraryEpisodes'), current = list.querySelector('[aria-pressed="true"]');
+    if (!current || current.hidden) return;
+    const top = current.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    list.scrollTop = Math.max(0, top - list.clientHeight / 2 + current.offsetHeight / 2);
+  }
+  function filterPlayerEpisodes() {
+    const query = el('playerEpisodeSearch').value.trim().toLocaleLowerCase();
+    let visible = 0;
+    el('libraryEpisodes').querySelectorAll('button').forEach(button => {
+      button.hidden = !!query && !button.dataset.search.includes(query);
+      if (!button.hidden) visible++;
+    });
+    el('playerEpisodeEmpty').hidden = visible > 0;
+    el('playerEpisodeCount').textContent = selected ? `${selected.episodes.length} saved${query ? ` · ${visible} matching` : ''}` : '';
+  }
+  el('playerEpisodeSearch').oninput = filterPlayerEpisodes;
+  el('playerCurrentEpisode').onclick = () => { el('playerEpisodeSearch').value = ''; filterPlayerEpisodes(); revealCurrentEpisode(); };
   function openDrama(drama) {
     if (!drama.episodes.length) return;
     selected = drama;
     el('libraryTitle').textContent = drama.title;
     video.poster = drama.poster;
     el('libraryEpisodes').replaceChildren();
-    drama.episodes.forEach(episode => {
-      const button = node('button', episode.title, 'btn2');
+    el('playerEpisodeSearch').value = '';
+    drama.episodes.forEach((episode, index) => {
+      const number = episode.title.match(/Episode\s*(\d+)/i)?.[1] || String(index + 1);
+      const button = node('button', '', 'btn2 player-episode');
+      button.title = episode.title; button.setAttribute('aria-label', episode.title);
+      button.dataset.search = (episode.title + ' ' + Number(number)).toLocaleLowerCase();
+      button.append(node('span', 'EP ' + number, 'player-episode-number'), node('small', episode.subtitle_url ? 'SRT' : 'Video', 'player-episode-caption'));
       button.onclick = () => play(episode, button);
       el('libraryEpisodes').append(button);
     });
+    filterPlayerEpisodes();
     el('libraryDialog').showModal();
     const ongoing = drama.episodes.filter(ep => playback[ep.url]?.time >= 3 && !playback[ep.url]?.completed).sort((a, b) => playback[b.url].updated - playback[a.url].updated)[0];
     const episode = ongoing || drama.episodes[0];

@@ -35,7 +35,7 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'Fix the automatic subtitle switch appearing round instead of pill-shaped, restore normal checkbox sizing, and clarify that switching automatic subtitles off affects new downloads without cancelling queued jobs.'
+    ET.SubElement(item, 'description').text = 'A redesigned Library player puts searchable compact episodes beside the video, keeps the current episode in view, simplifies playback controls, and organizes subtitle review and recognition options.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)

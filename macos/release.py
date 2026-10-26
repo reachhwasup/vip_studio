@@ -35,7 +35,7 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'Remove the Add to your collection card and manual link entry from Downloads so the episode queue uses the full available width. Download folder selection remains in Settings.'
+    ET.SubElement(item, 'description').text = 'Remove the video downloads, subtitle processing and Open Library summary strip from Downloads for a simpler queue-focused layout.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)

@@ -26,12 +26,9 @@
   window.vipWorkspaceSummary = summary;
   function refresh() {
     const state = summary(typeof tasks === 'undefined' ? [] : tasks, jobs, typeof running !== 'undefined' && running);
-    for (const [key, id] of Object.entries({videos: 'activityVideos', videoDetail: 'activityVideoDetail', subtitles: 'activitySubtitles', subtitleDetail: 'activitySubtitleDetail'})) el(id).textContent = state[key];
-    el('activitySubtitles').classList.toggle('activity-working', state.subtitles !== 'No active jobs');
     el('workspaceQueueText').textContent = state.queueText;
     el('workspaceQueue').classList.toggle('is-running', state.busy);
   }
-  el('activityLibrary').onclick = () => setTab('library');
   el('updateViewActivity').onclick = () => { setTab('downloads'); setDownloadView('queue'); };
   window.addEventListener('vip-subtitle-progress', event => {
     const job = event.detail?.job;

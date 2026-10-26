@@ -73,7 +73,6 @@
   };
   document.querySelectorAll('[data-subtitle-view]').forEach(button => button.onclick = () => setView(button.dataset.subtitleView));
   el('subtitleOpenLibrary').onclick = () => setTab('library');
-  el('activitySubtitlesLink').onclick = () => { setTab('subtitles'); setView('jobs'); };
   el('refreshSubtitleJobs').onclick = window.loadSubtitleJobs;
   el('subtitleJobFilter').onchange = render;
   try { const saved = sessionStorage.getItem('vip_subtitle_view'); if (['jobs','preferences','files'].includes(saved)) setView(saved); } catch (_) {}

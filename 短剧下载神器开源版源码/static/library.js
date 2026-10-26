@@ -68,7 +68,7 @@
     button.disabled = !episode || !!busy;
     el('reviewLibrarySubtitles').disabled = !episode?.subtitle_url || !!busy;
     button.textContent = busy ? (job.status === 'running' ? (job.stage || 'Processing subtitles…') : 'Queued…') : episode && episode.subtitle_url ? 'Regenerate subtitles' : 'Create subtitles';
-    const status = !episode ? 'Choose an episode.' : job?.status === 'error' ? job.error : job?.status === 'done' ? `${job.captions} captions saved · ${job.method === 'hybrid' ? `Captions + speech · ${job.audio_added || 0} gaps recovered · ${job.review_count || 0} speech lines to review` : job.method === 'picture' ? 'Read from video' : 'From speech recognition'}${job.warnings?.length ? ' · '+job.warnings.join(' ') : ''}` : busy ? (job.retrying ? 'Reconnecting to subtitle processing. Your job may still be running.' : 'Processing locally. You can keep browsing while this finishes.') : episode.subtitle_url ? 'SRT available for this episode.' : 'No subtitle file saved yet.';
+    const status = !episode ? 'Choose an episode.' : job?.status === 'error' ? job.error : job?.status === 'done' ? `${job.captions} captions saved · ${job.method === 'hybrid' ? `Captions + speech · ${job.phrase_joins || 0} phrase breaks refined · ${job.audio_added || 0} gaps recovered · ${job.review_count || 0} speech lines to review` : job.method === 'picture' ? 'Read from video' : 'From speech recognition'}${job.warnings?.length ? ' · '+job.warnings.join(' ') : ''}` : busy ? (job.retrying ? 'Reconnecting to subtitle processing. Your job may still be running.' : 'Processing locally. You can keep browsing while this finishes.') : episode.subtitle_url ? 'SRT available for this episode.' : 'No subtitle file saved yet.';
     const percent = Number.isFinite(job?.progress) ? Math.round(job.progress) : null;
     el('librarySubtitleStatus').textContent = busy ? (job.status === 'queued' ? 'Waiting for subtitle worker…' : (job.stage || 'Processing subtitles…') + (percent !== null ? ` · ${percent}%` : '') + (job.total ? ` · ${job.completed}/${job.total} images` : '')) : status;
     const progress = el('librarySubtitleProgress'); progress.hidden = !busy;
@@ -149,7 +149,8 @@
     const index = selected.episodes.indexOf(episode);
     el('previousLibraryEpisode').disabled = index <= 0;
     el('nextLibraryEpisode').disabled = index >= selected.episodes.length - 1;
-    el('libraryEpisodeTitle').textContent = episode.title;
+    el('libraryEpisodeTitle').textContent = episode.title.match(/Episode\s*\d+/i)?.[0] || episode.title;
+    el('togglePlayerEpisodes').textContent = `Episodes · ${selected.episodes.length}`;
     el('libraryPlaybackStatus').textContent = '';
     el('libraryEpisodes').querySelectorAll('button').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
     if (button?.hidden) { el('playerEpisodeSearch').value = ''; filterPlayerEpisodes(); }
@@ -174,9 +175,19 @@
   }
   el('playerEpisodeSearch').oninput = filterPlayerEpisodes;
   el('playerCurrentEpisode').onclick = () => { el('playerEpisodeSearch').value = ''; filterPlayerEpisodes(); revealCurrentEpisode(); };
+  function showEpisodePanel(show) {
+    el('libraryDialog').classList.toggle('episodes-hidden', !show);
+    el('playerEpisodeSidebar').hidden = !show;
+    el('togglePlayerEpisodes').setAttribute('aria-expanded', String(show));
+    if (show) requestAnimationFrame(revealCurrentEpisode);
+  }
+  el('togglePlayerEpisodes').onclick = () => showEpisodePanel(el('playerEpisodeSidebar').hidden);
   function openDrama(drama) {
     if (!drama.episodes.length) return;
     selected = drama;
+    showEpisodePanel(drama.episodes.length > 1);
+    document.querySelector('.player-subtitle-settings').open = false;
+    document.querySelector('.player-main').scrollTop = 0;
     el('libraryTitle').textContent = drama.title;
     video.poster = drama.poster;
     el('libraryEpisodes').replaceChildren();

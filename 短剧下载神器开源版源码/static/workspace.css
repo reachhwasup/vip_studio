@@ -49,3 +49,28 @@ input[type=checkbox]{min-height:0}
 /* Notification history has a dedicated destination in the main navigation. */
 .notification-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.notification-actions button{font-size:12px}#notifications .notification-history{padding:24px}#notifications .notification-history>.hint{margin:0 0 14px}#notificationStatus{margin:0 0 18px}#notifications .notice-list{max-height:none}.notification-history .notice-card{min-width:0}#notifications .workspace-heading{align-items:flex-start}
 @media(max-width:680px){.tabs{grid-template-columns:repeat(6,minmax(0,1fr))}.tab>span:not(.badge){font-size:9px}.tab .badge{right:2px;font-size:8px;min-width:14px;padding:0 3px}.notification-actions{gap:7px}#notifications .workspace-heading{flex-direction:column;gap:16px}#notifications .notification-history{padding:16px}.notification-actions button{font-size:11px}}
+
+/* Keep watching controls compact and let the viewer reclaim the episode rail. */
+#libraryDialog.library-player{width:min(1400px,96vw);height:min(960px,94dvh)}
+#libraryDialog .player-header{height:72px;padding:14px 22px}
+#libraryDialog .player-header h2{font-size:17px}
+.player-header-actions{display:flex;align-items:center;gap:8px;flex:none}
+#togglePlayerEpisodes[aria-expanded=true]{background:#77aaff20;border-color:#77aaff55;color:#bdd6ff}
+#libraryDialog .player-layout{height:calc(100% - 72px);grid-template-columns:minmax(0,1fr) 250px}
+#libraryDialog.episodes-hidden .player-layout{grid-template-columns:minmax(0,1fr)}
+#libraryDialog .player-episode-sidebar[hidden]{display:none}
+#libraryDialog .player-main{padding:18px 22px 24px}
+#libraryDialog .player-screen{min-height:0;background:#000;border-radius:10px}
+#libraryDialog #libraryVideo{display:block;height:min(53vh,540px);max-height:none;object-fit:contain}
+#libraryDialog .player-now{margin:14px 0 12px}
+#libraryDialog .player-now h3{font-size:18px;letter-spacing:-.3px}
+#libraryDialog .player-now .player-eyebrow{font-size:9px;margin-bottom:3px}
+#libraryDialog .player-toolbar{margin-bottom:8px}
+#libraryDialog .player-preferences{padding:10px 0;gap:22px}
+#libraryDialog .library-subtitles{margin-top:10px;padding:14px 16px;background:#131e2d}
+#libraryDialog .player-caption-hint{font-size:11px;color:#8fa4bf;line-height:1.6;margin:8px 0 0}
+#libraryDialog #librarySubtitleStatus{margin:5px 0;font-size:11px}
+#libraryDialog .player-subtitle-settings{margin-top:10px;padding-top:10px}
+#libraryDialog .player-episode-sidebar{padding:20px 16px}
+@media(max-width:900px){#libraryDialog .player-layout{grid-template-columns:minmax(0,1fr) 210px}#libraryDialog .player-main{padding:14px}.player-header-actions{gap:5px}#libraryDialog .player-header{padding:14px}#libraryDialog .player-header h2{font-size:14px}}
+@media(max-width:680px){#libraryDialog .player-header{height:auto;min-height:78px;gap:10px;align-items:flex-start}#libraryDialog .player-header-actions{flex-direction:column;align-items:stretch}#libraryDialog .player-header button{height:30px;min-height:30px;font-size:10px}#libraryDialog .player-layout{height:auto}#libraryDialog #libraryVideo{height:32vh}#libraryDialog .player-main{padding:12px}#libraryDialog .player-now h3{font-size:16px}#libraryDialog .player-episode-sidebar{min-height:220px}#libraryDialog .player-subtitle-heading{gap:8px}#libraryDialog .player-preferences{gap:12px}}

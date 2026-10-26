@@ -19,6 +19,7 @@ import subprocess
 import shutil
 import time
 import webbrowser
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -1173,7 +1174,7 @@ def run_subtitle_repair(job_id, video_path):
         srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(),
             mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage)
         count = len(import_subtitles(srt.read_bytes(), srt.name)['segments'])
-        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'review_count': len(report.get('review_candidates', []))}
+        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'phrase_joins': report.get('phrase_joins', 0), 'review_count': len(report.get('review_candidates', []))}
     except Exception as exc:
         app.logger.exception('Subtitle regeneration failed')
         result = {'status': 'error', 'progress': None, 'error': str(exc)}
@@ -1320,6 +1321,45 @@ def fetch_cover_image(url):
             raise ValueError("The poster response was not a supported image.")
         return image, extension
     raise ValueError("Too many poster redirects.")
+
+
+_thumbnail_cache = OrderedDict()
+_thumbnail_lock = threading.Lock()
+_thumbnail_workers = threading.BoundedSemaphore(6)
+
+
+@app.get('/api/thumbnail')
+def catalogue_thumbnail():
+    # Reuse the cover downloader's CDN allowlist, redirect checks and byte limit.
+    url = request.args.get('url', '')
+    if not url or len(url) > 4096:
+        return Response(status=400)
+    with _thumbnail_lock:
+        cached = _thumbnail_cache.get(url)
+        if cached and time.time() - cached[0] < 86400:
+            _thumbnail_cache.move_to_end(url)
+        else:
+            _thumbnail_cache.pop(url, None)
+            cached = None
+    if not cached:
+        with _thumbnail_workers:
+            for attempt in range(2):
+                try:
+                    content, extension = fetch_cover_image(url)
+                    break
+                except ValueError:
+                    return Response(status=400)
+                except requests.RequestException:
+                    if attempt:
+                        return Response(status=502, headers={'Cache-Control': 'no-store'})
+            cached = (time.time(), content, extension)
+            with _thumbnail_lock:
+                _thumbnail_cache[url] = cached
+                _thumbnail_cache.move_to_end(url)
+                while len(_thumbnail_cache) > 128 or sum(len(value[1]) for value in _thumbnail_cache.values()) > 16 * 1024 * 1024:
+                    _thumbnail_cache.popitem(last=False)
+    mime = {'.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif'}[cached[2]]
+    return Response(cached[1], mimetype=mime, headers={'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff'})
 
 
 COVER_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".gif")

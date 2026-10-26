@@ -7,10 +7,13 @@
  list.addEventListener('scroll',updateArrows,{passive:true});
  new ResizeObserver(updateArrows).observe(list);
  async function load(refresh=false){
-  button.disabled=true;status.textContent='Loading trending dramas…';
+  if(button.disabled && status.dataset.loading==='1')return;
+  button.disabled=true;status.dataset.loading='1';status.textContent=list.children.length?'Refreshing ranking…':'Loading trending dramas…';
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),35000);
   try{
-   const response=await fetch('/api/trending'+(refresh?'?refresh=1':'')),data=await vipReadJSON(response);
+   const response=await fetch('/api/trending'+(refresh?'?refresh=1':''),{signal:controller.signal}),data=await vipReadJSON(response);
    if(!response.ok)throw new Error(data.error||'Could not load trending dramas.');
+   if(!Array.isArray(data.items)||!data.items.length)throw new Error('No ranked dramas were returned. Please refresh again.');
    list.replaceChildren();
    data.items.forEach(item=>{
     const card=document.createElement('button');card.type='button';card.className='trending-card';card.setAttribute('aria-label',`Rank ${item.rank}: ${item.title}. View episodes`);
@@ -22,9 +25,10 @@
     card.append(cover,title);card.onclick=()=>openDetails(normalizeRow(item));list.append(card);
    });
    list.scrollLeft=0;updateArrows();
-   status.textContent=`${data.items.length} ranked dramas · Fetched ${new Date(data.updated_at*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}`;
-  }catch(error){status.textContent=error.message+(list.children.length?' Showing previously loaded rankings.':'')}
-  finally{button.disabled=false}
+   const fetched=new Date(data.updated_at*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+   status.textContent=data.stale?`${data.warning} Saved ${fetched}.`:`${data.items.length} ranked dramas · Updated ${fetched}`;
+  }catch(error){status.textContent=(error.name==='AbortError'?'The ranking request timed out. Try Refresh ranking again.':error.message)+(list.children.length?' Showing previously loaded rankings.':'')}
+  finally{clearTimeout(timeout);status.dataset.loading='0';button.disabled=false}
  }
  button.onclick=()=>load(true);load();
 })();

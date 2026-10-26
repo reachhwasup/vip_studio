@@ -708,6 +708,7 @@ def saved_download(root_key, filename):
 
 TRENDING_URL = "https://hongguoduanju.com/rank/hot-real-drama"
 _trending_cache = (0, [])
+_trending_lock = threading.Lock()
 
 
 def parse_trending(html):
@@ -732,21 +733,75 @@ def parse_trending(html):
     return sorted(items, key=lambda item: item['rank'])
 
 
+def trending_cache_path():
+    return parser_module.get_runtime_base_dir() / 'trending_cache.json'
+
+
+def read_trending_cache():
+    try:
+        path = trending_cache_path()
+        if path.stat().st_size > 2_000_000:
+            return 0, []
+        saved = json.loads(path.read_text(encoding='utf-8'))
+        items, updated = saved.get('items'), saved.get('updated_at')
+        if not isinstance(items, list) or not 0 < len(items) <= 100 or not isinstance(updated, (int, float)) or not 0 < updated <= time.time() + 60:
+            return 0, []
+        if any(not isinstance(item, dict) or not str(item.get('drama_id', '')).isdigit() or not isinstance(item.get('title'), str) or not item['title'] or not isinstance(item.get('rank'), int) or item['rank'] < 1 for item in items):
+            return 0, []
+        return updated, items
+    except (OSError, ValueError, TypeError, AttributeError):
+        return 0, []
+
+
+def save_trending_cache(updated, items):
+    path = trending_cache_path()
+    staged = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, prefix='.trending-', delete=False) as file:
+            staged = Path(file.name)
+            json.dump({'updated_at': updated, 'items': items}, file, ensure_ascii=False)
+        os.replace(staged, path)
+    except OSError:
+        app.logger.warning('Could not save trending cache')
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+
+
+def fetch_trending():
+    # Some cached ranking responses send headers and then stall indefinitely.
+    # Retry the same published ranking through an alternate URL, with bounded waits.
+    for url in (TRENDING_URL, TRENDING_URL + '?refresh=1', 'https://www.hongguoduanju.com/rank/hot-real-drama'):
+        try:
+            items = parse_trending(fetch_text(url, timeout=(4, 6)))
+            if items:
+                return items
+        except (requests.RequestException, ValueError):
+            continue
+    raise ValueError('The ranking source did not return ranked dramas')
+
+
 @app.get('/api/trending')
 def api_trending():
     global _trending_cache
-    updated, items = _trending_cache
-    if not items or time.time() - updated > 900 or request.args.get('refresh') == '1':
-        try:
-            items = parse_trending(fetch_text(TRENDING_URL))
-            if not items:
-                raise ValueError('No ranked dramas found')
-            updated = time.time()
-            _trending_cache = (updated, items)
-        except Exception:
-            app.logger.exception('Could not fetch Hongguo rankings')
-            return jsonify({'error': 'Trending dramas are unavailable right now. Please try again.'}), 502
-    return jsonify({'items': items, 'updated_at': updated, 'source_url': TRENDING_URL})
+    with _trending_lock:
+        if not _trending_cache[1]:
+            _trending_cache = read_trending_cache()
+        updated, items = _trending_cache
+        stale = False
+        if not items or time.time() - updated > 900 or request.args.get('refresh') == '1':
+            try:
+                fresh = fetch_trending()
+                updated, items = time.time(), fresh
+                _trending_cache = (updated, items)
+                save_trending_cache(updated, items)
+            except (requests.RequestException, ValueError):
+                if not items:
+                    return jsonify({'error': 'Could not connect to the trending ranking. Please try Refresh ranking again.'}), 502
+                stale = True
+    return jsonify({'items': items, 'updated_at': updated, 'source_url': TRENDING_URL,
+                    'stale': stale, 'warning': 'The ranking source is unavailable. Showing your last saved ranking.' if stale else ''})
 
 
 def library_roots():

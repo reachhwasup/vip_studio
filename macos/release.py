@@ -35,7 +35,7 @@ def main():
     ET.SubElement(item, f'{{{sparkle}}}version').text = info['CFBundleVersion']
     ET.SubElement(item, f'{{{sparkle}}}shortVersionString').text = version
     ET.SubElement(item, f'{{{sparkle}}}minimumSystemVersion').text = info['LSMinimumSystemVersion']
-    ET.SubElement(item, 'description').text = 'Remove the Search dramas and Queue ready controls from the top bar for a cleaner workspace header.'
+    ET.SubElement(item, 'description').text = 'Restore Trending with bounded retries through alternate ranking URLs, saved rankings across restarts, and clear offline and timeout feedback.'
     ET.SubElement(item, 'enclosure', {'url': f'{REPO}/releases/download/v{version}/{archive.name}', 'length': str(archive.stat().st_size), 'type': 'application/octet-stream', f'{{{sparkle}}}edSignature': signature})
     feed_path = output / 'appcast.xml'
     ET.ElementTree(feed).write(feed_path, encoding='utf-8', xml_declaration=True)

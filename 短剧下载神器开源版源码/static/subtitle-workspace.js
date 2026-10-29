@@ -79,7 +79,7 @@
       const episode = (job.title || '').match(/Episode\s*(\d+)/i)?.[1];
       const title = episode ? (job.title || '').replace(/\s*[-–·]?\s*Episode\s*\d+\s*$/i, '') : job.title;
       const marker = node('span', episode ? 'EP ' + episode : 'SRT', 'subtitle-episode-marker');
-      const copy = node('div'); copy.append(node('h3', title || 'Saved episode'), node('small', methods[job.mode] || 'Subtitle processing'));
+      const copy = node('div'); copy.append(node('h3', title || 'Saved episode'), node('small', job.fallback_from === 'paraformer' && job.speech_engine === 'whisper' ? 'Whisper audio · recovered from Paraformer timing failure' : methods[job.mode] || 'Subtitle processing'));
       identity.append(marker, copy); card.append(identity);
       const detail = node('div', '', 'subtitle-job-detail');
       const label = ({queued:job.stage === 'Waiting for download folder' ? 'Drive unavailable' : 'Waiting',running:'Processing',done:'Ready',review:'Needs review',error:'Failed'})[state] || state;

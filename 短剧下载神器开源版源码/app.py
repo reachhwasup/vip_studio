@@ -1182,7 +1182,7 @@ def run_subtitle_repair(job_id, video_path):
         srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(),
             mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage, cpu_threads=options.get('cpu_threads', 2))
         count = len(import_subtitles(srt.read_bytes(), srt.name)['segments'])
-        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'phrase_joins': report.get('phrase_joins', 0), 'review_count': len(report.get('review_candidates', [])), 'quality_issue_count': len(report.get('quality_issues', [])), 'quality_state': report.get('quality_state', 'ready'), 'speech_engine': report.get('speech_engine', '')}
+        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'phrase_joins': report.get('phrase_joins', 0), 'review_count': len(report.get('review_candidates', [])), 'quality_issue_count': len(report.get('quality_issues', [])), 'quality_state': report.get('quality_state', 'ready'), 'speech_engine': report.get('speech_engine', ''), 'fallback_from': report.get('fallback_from', '')}
     except Exception as exc:
         app.logger.exception('Subtitle regeneration failed')
         result = {'status': 'error', 'progress': None, 'error': str(exc)}

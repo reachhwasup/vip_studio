@@ -472,7 +472,7 @@ def _subtitles_from_audio(video_path: Path, ffmpeg_bin: str, tmp: Path, srt_path
 
     out_base = tmp / "subtitles"
     command = [WHISPER_BIN, "-m", str(MODEL_PATH), "-f", str(wav_path), "-l", language,
-               "-osrt", "-of", str(out_base), "-pp"]
+               "-osrt", "-of", str(out_base), "-pp", '-t', str(getattr(_progress_state, 'cpu_threads', 2))]
     if VAD_MODEL_PATH.is_file():
         # Voice detection keeps lines from starting during silence or music.
         command += ["--vad", "--vad-model", str(VAD_MODEL_PATH)]
@@ -673,9 +673,24 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
                 speech = import_subtitles(generated.read_bytes(), generated.name)['segments']
                 report['speech_engine'] = 'paraformer'
             except Exception as exc:
+                alignment_failure = any(reason in str(exc) for reason in (
+                    'Chinese alignment changed the recognized words',
+                    'Chinese text and speech timestamps could not be aligned',
+                    'Chinese phrase alignment failed',
+                    'Chinese model returned invalid speech timestamps',
+                    'Chinese model returned overlapping speech timestamps',
+                ))
                 if not picture:
-                    raise
-                report['warnings'].append('Chinese speech comparison failed; kept on-screen captions. ' + str(exc))
+                    if not alignment_failure or _whisper_missing():
+                        raise
+                    progress('Paraformer timing failed; recovering with Whisper')
+                    fallback = tmp / 'whisper-recovery.srt'
+                    _subtitles_from_audio(video_path, ffmpeg_bin, tmp, fallback, language=language)
+                    speech = import_subtitles(fallback.read_bytes(), fallback.name)['segments']
+                    report.update(speech_engine='whisper', fallback_from='paraformer')
+                    report['warnings'].append('Paraformer could not safely align this episode. Used Whisper audio transcription instead; review the wording, timing and speaker boundaries.')
+                else:
+                    report['warnings'].append('Chinese speech comparison failed; kept on-screen captions. ' + str(exc))
         elif mode != 'picture':
             reason = _whisper_missing()
             if reason:
@@ -703,7 +718,7 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
         elif picture:
             combined = [dict(x, source='picture') for x in picture]; method = 'picture'
         else:
-            combined = [dict(x, source='audio') for x in speech]; method = 'funasr' if mode in ('funasr', 'hybrid') else 'audio'
+            combined = [dict(x, source='audio') for x in speech]; method = 'funasr' if mode in ('funasr', 'hybrid') and report.get('speech_engine') != 'whisper' else 'audio'
         if not combined:
             raise RuntimeError('No usable dialogue was recognised; the existing subtitles were kept.')
         report.update(picture_captions=len(picture), speech_captions=len(speech), method=method)

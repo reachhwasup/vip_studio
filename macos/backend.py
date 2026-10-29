@@ -6,6 +6,22 @@ from pathlib import Path
 
 
 def main():
+    if '--check-cryptography' in sys.argv:
+        # Verify the frozen app's required cipher/signing modules without I/O.
+        import hashlib
+        import importlib
+        from Crypto.Cipher import AES
+        from Crypto.Util.Padding import pad, unpad
+        key, iv, plain = b'0123456789abcdef', b'0000000000000000', b'VIP Studio cipher check'
+        encrypted = AES.new(key, AES.MODE_CBC, iv).encrypt(pad(plain, 16))
+        if unpad(AES.new(key, AES.MODE_CBC, iv).decrypt(encrypted), 16) != plain:
+            raise RuntimeError('Packaged AES verification failed')
+        parser = importlib.import_module('1')
+        url, headers, body = parser.sign_json_request_with_liushen('https://example.invalid/check?device_id=1&iid=2', {'check': True}, {'device_id': '1', 'install_id': '2', 'platform': 'android'})
+        if not url or not headers.get('x-gorgon') or headers.get('x-ss-stub', '').upper() != hashlib.md5(body).hexdigest().upper():
+            raise RuntimeError('Packaged request signing verification failed')
+        print(json.dumps({'cryptography': True, 'request_signing': True}))
+        return
     if '--check-subtitle-encodings' in sys.argv:
         # Exercise dynamic codec lookup inside the frozen executable, without
         # starting a server or accessing the user's videos or configuration.

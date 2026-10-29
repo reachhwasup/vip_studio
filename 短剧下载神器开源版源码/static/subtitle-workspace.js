@@ -126,10 +126,17 @@
       const data = await vipReadJSON(response);
       if (!response.ok || !Array.isArray(data.jobs)) throw new Error(data.error || 'Could not load subtitle activity. Update and restart the app, then try again.');
       const changed = !rendered || JSON.stringify(jobs) !== JSON.stringify(data.jobs);
+      const previous = new Map(jobs.map(job => [job.id, job]));
       jobs = data.jobs;
-      if (changed) render(); el('subtitleJobsStatus').textContent = '';
-      // Keep the workspace header and Library in sync with jobs from any entry point.
-      jobs.forEach(job => window.dispatchEvent(new CustomEvent('vip-subtitle-progress', {detail: {job, url: job.subtitle_url?.replace(/\.srt$/, '.mp4')}})));
+      if (changed) {
+        render();
+        // Notify other views only about jobs that actually changed.
+        jobs.filter(job => JSON.stringify(previous.get(job.id)) !== JSON.stringify(job)).forEach(job => {
+          const url = job.video_url || job.subtitle_url?.replace(/\.srt$/, '.mp4');
+          window.dispatchEvent(new CustomEvent('vip-subtitle-progress', {detail: {job, url}}));
+        });
+      }
+      el('subtitleJobsStatus').textContent = '';
     } catch (error) { el('subtitleJobsStatus').textContent = error.message; }
     finally { loading = false; el('refreshSubtitleJobs').disabled = false; }
   };

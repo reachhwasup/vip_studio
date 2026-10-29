@@ -40,10 +40,11 @@ def main():
     run(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir', '--name', 'VIPStudioBackend',
         '--distpath', BUILD / 'bundled', '--workpath', BUILD / 'pyinstaller', '--specpath', BUILD,
         '--add-data', f'{SOURCE / "funasr_worker.py"}:.', '--paths', SOURCE, '--paths', SOURCE / 'liushen', '--hidden-import', '1', '--collect-submodules', 'flurl', '--collect-submodules', 'encodings',
-        '--collect-all', 'Crypto', '--add-data', f'{SOURCE / "static"}:static',
+        '--add-data', f'{SOURCE / "static"}:static',
         '--add-binary', f'{Path(ffmpeg).resolve()}:.', '--add-binary', f'{BUILD / "subtitle_ocr"}:.',
         ROOT / 'macos' / 'backend.py')
     run(BUILD / 'bundled' / 'VIPStudioBackend' / 'VIPStudioBackend', '--check-subtitle-encodings')
+    run(BUILD / 'bundled' / 'VIPStudioBackend' / 'VIPStudioBackend', '--check-cryptography')
     if APP.exists():
         shutil.rmtree(APP)
     (APP / 'Contents' / 'MacOS').mkdir(parents=True)
@@ -57,8 +58,8 @@ def main():
     run('swift', ROOT / 'macos' / 'icon.swift', BUILD / 'VIPStudio.iconset')
     run('iconutil', '-c', 'icns', BUILD / 'VIPStudio.iconset', '-o', resources / 'VIPStudio.icns')
     info = {'CFBundleIconFile': 'VIPStudio.icns', 'CFBundleName': 'VIP Studio', 'CFBundleDisplayName': 'VIP Studio', 'CFBundleIdentifier': 'studio.vip.drama',
-            'CFBundleExecutable': 'VIPStudio', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.6.32',
-            'CFBundleVersion': '43', 'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True,
+            'CFBundleExecutable': 'VIPStudio', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.6.33',
+            'CFBundleVersion': '44', 'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True,
             'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
             'SUFeedURL': 'https://github.com/reachhwasup/vip_studio/releases/latest/download/appcast.xml',
             'SUPublicEDKey': (ROOT / 'macos' / 'update-public-key.txt').read_text().strip(),

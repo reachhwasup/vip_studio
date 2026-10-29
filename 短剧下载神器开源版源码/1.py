@@ -192,11 +192,6 @@ def sign_json_request_with_liushen(
     return sign_url, sign_headers, body_bytes
 
 
-def replace_failed_device(device_id: str, platform: str) -> None:
-    """Mark a device as failed so it isn't reused. Hook for your device pool."""
-    pass
-
-
 def get_current_domain(request=None) -> str:
     """Return the current server's base URL for serving local files."""
     if request is not None:
@@ -817,13 +812,8 @@ def download_and_decrypt_video(
                     data["video_info"] = video_info
                     return build_response_payload(video_id, video_model, video_data, best_item)
 
-        # retry with new device
+        # Retry with a freshly requested playback URL.
         if attempt < max_retries - 1 and video_id:
-            if current_device_keys:
-                replace_failed_device(
-                    current_device_keys.get("device_id", ""),
-                    current_device_keys.get("platform", ""),
-                )
             try:
                 new_url, new_keys = refresh_fallback_url(video_id)
                 if new_url:

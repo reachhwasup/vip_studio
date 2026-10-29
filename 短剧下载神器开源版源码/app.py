@@ -163,8 +163,6 @@ def get_config():
 def save_config():
     try:
         values = hongguo_credentials(request.get_json(silent=True))
-    except parser_module.VideoServiceUnavailable as exc:
-        return jsonify({"error": str(exc), "code": "hongguo_video_unavailable"}), 503
     except DeviceConfigurationError as exc:
         return jsonify({"error": str(exc), "code": "device_configuration"}), 400
     device_id, install_id, platform = values['device_id'], values['install_id'], values['platform']
@@ -627,6 +625,12 @@ def search_all_sources(keyword, page, category_filter):
                 keys[key] = group
                 groups.append(group)
             group = keys[key]
+            unavailable = group.get('downloadable') is False or group.get('availability') == 'unavailable'
+            playable = item.get('downloadable') is not False and item.get('availability') != 'unavailable'
+            if unavailable and playable:
+                variants = group['variants']
+                group.update(item)
+                group['variants'] = variants
             if not any(v.get('drama_id') == item.get('drama_id') and v['source_label'] == item['source_label'] for v in group['variants']):
                 group['variants'].append(item)
     offset = 0 if page % 2 else 50

@@ -32,3 +32,15 @@ class AllSourcesTests(unittest.TestCase):
     def test_both_sources_failing_returns_error(self):
         with patch.object(app,'search_short_drama',side_effect=ValueError('offline')):
             self.assertEqual(app.app.test_client().get('/api/search?source=all').status_code,500)
+
+    def test_merged_title_prefers_source_with_playable_episodes(self):
+        for gz_available in [True,False]:
+            with self.subTest(gz_available=gz_available):
+                def search(keyword,page,source,category):
+                    playable=(source=='gz360')==gz_available
+                    return [{'title':'Same title','drama_id':source,'downloadable':playable,'availability':'available' if playable else 'unavailable'}]
+                with patch.object(app,'search_short_drama',side_effect=search):items,warnings=app.search_all_sources('',1,'')
+                self.assertEqual(len(items),1);self.assertTrue(items[0]['downloadable'])
+                self.assertEqual(items[0]['availability'],'available')
+                self.assertEqual(items[0]['source_label'],'GZ360' if gz_available else 'Hongguo')
+                self.assertEqual(len(items[0]['variants']),2)

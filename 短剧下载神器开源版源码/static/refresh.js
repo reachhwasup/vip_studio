@@ -20,6 +20,7 @@
   }
   document.querySelectorAll('.tab[data-tab]').forEach(button => { button.title = button.querySelector('span')?.textContent || ''; });
   navigation(read('vip_compact_sidebar')); library(read('vip_compact_library'));
+  el('settingsSubtitlePreferences').onclick = () => { setTab('subtitles'); document.querySelector('[data-subtitle-view="preferences"]').click(); };
   el('toggleSidebar').onclick = () => navigation(!document.body.classList.contains('sidebar-collapsed'));
   el('libraryDensityToggle').onclick = () => library(!el('libraryGrid').classList.contains('compact-library'));
 })();

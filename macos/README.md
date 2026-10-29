@@ -20,7 +20,7 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 
 - Continue / Episodes retries temporary website failures and can use the signed service endpoint or a saved episode list. Saved lists stay in app history; stale lists are labelled so newly released episodes are not mistaken for the complete current catalogue.
 
-- Generated subtitles are saved as SRT without an extra transcript JSON file. Speech comparison suggestions stay available during the current app session.
+- Generated subtitles are saved as SRT without an extra transcript JSON file. Speech comparison suggestions are saved in the app database for the exact SRT revision and survive restarting.
 
 - Subtitles has its own tab: Processing queue shows shared Download/Library jobs and live OCR progress; Preferences controls automatic subtitle creation; Import & timing contains subtitle file preview, synchronization and export. To generate subtitles for a saved video, use Create from Library. Jobs are saved in app data and unfinished work resumes after restarting; SRT files remain with the saved videos.
 - Downloads → Episodes at once selects 1–4 simultaneous video downloads (three for new installations). The control stays in sync with Settings. Subtitles run in a separate queue and show progress on each saved video, so OCR and speech processing do not hold video download slots. Keep the app open for subtitle jobs; after a restart, check Library for saved SRT files or regenerate unfinished ones.
@@ -30,7 +30,7 @@ Settings/history: `~/Library/Application Support/VIP Studio`. Default video fold
 - Library resumes unfinished episodes and remembers the last 500 playback positions on this device. Start over replays an episode. Playback supports saved SRT captions, speed controls, previous/next episodes and opt-in automatic next episode.
 - Library filters include Continue watching and Missing subtitles, with sorting by date, title or episode count.
 - Subtitle generation checks on-screen captions plus local speech in Auto mode. Audio-only and picture-only methods are available; the Library remembers method and language. Conflicting speech suggestions remain available in Review & edit.
-- Subtitle editing includes Undo/Redo for the current session. Temporary connection failures during generation are retried; restarting the app may lose in-memory job tracking, so refresh Library to check the saved SRT.
+- Subtitle editing includes Undo/Redo for the current session. Temporary connection failures during generation are retried; jobs are saved in the app database.
 - Download Details shows subtitle/poster warnings. Clear all is unavailable while download workers are active.
 
 - Subtitle import and review can stretch/compress timings to correct gradual drift, compare against video duration, and adjust fixed delays. Imported timings can be reset; review edits support Undo. Timing correction is manual.
@@ -64,3 +64,23 @@ This creates the signed ZIP, signed appcast.xml, a legacy latest.json manifest, 
 Do not commit config.json, .env, user history, downloaded videos, logs, signing private keys or GitHub credentials. Build outputs, the local release checkout and the virtual environment are ignored by Git.
 
 FFmpeg and its bundled libraries retain their licenses in the app's ThirdPartyNotices folder. FFmpeg source/configuration: https://ffmpeg.org/download.html and the matching Homebrew formula https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/f/ffmpeg.rb . Sparkle license is included in Sparkle.framework.
+
+### Chinese caption comparison and statement grouping
+
+In Library → Generate or replace subtitles, choose **Compare video text + Chinese audio** to compare on-screen text with local speech. OCR wording and timing are retained when speech disagrees; saved review hints identify disagreements. **Needs review** is separate from ready jobs.
+
+Short clauses stay together across commas and brief pauses. Sentence endings, long readable spans and clear pauses can still create breaks. Automatic OCR joins require close wording and timing matches and reject conflicting named speakers. Recognition cannot reliably identify every speaker change: review the video before accepting a join. Review & edit → **Join next** combines adjacent captions with Undo before saving.
+
+CPU use offers Cool (1 worker), Balanced (2, default), and Faster (4). Existing SRTs change only when regenerated or saved in the editor; regeneration creates a backup.
+
+### Speaker changes and imported captions
+
+Paraformer-only transcription does not identify speakers; it can put two voices into one caption. These jobs are marked for review before translating or dubbing. Video-text comparison now retains OCR caption breaks when speaker identity is unknown, even if speech wording agrees. A shared sentence or short pause is not proof of one speaker. Use video text when available, and review actual speaker changes in AI Transcript before dubbing.
+
+### Subtitle enhancement during downloads
+
+Subtitles → Preferences now controls the method, audio language and CPU use for automatic downloads. **Recommended** uses OCR + Paraformer for Chinese when the installed models are ready, otherwise OCR + Whisper. It preserves unknown speaker boundaries, keeps OCR wording when audio disagrees, saves review hints and marks uncertain results for review. Audio-only models still require speaker review. Processing is local and uses the shared single-worker queue. Settings are saved in the app profile and apply when each video finishes downloading; already queued subtitle jobs keep their settings. Existing SRT files are retained when skipping saved videos; regenerate them in Library to update them.
+
+### One Smart subtitles option
+
+Download Preferences and Library now share **Smart subtitles (recommended)**. It reads video text and checks exactly one audio engine: Paraformer for Chinese when installed, otherwise Whisper. If no readable video captions are found it uses the selected speech engine and marks the result for review. It keeps existing caption breaks when speakers are unknown and saves disagreements for review. The menu also offers **Video text only** and **Audio only**; engine-specific choices are retained only for existing saved overrides and queued jobs. Smart does not run Paraformer and Whisper together, and does not identify speaker turns. Existing per-episode overrides and queued jobs are retained.

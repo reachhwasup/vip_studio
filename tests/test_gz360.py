@@ -69,3 +69,26 @@ class GZ360Tests(unittest.TestCase):
     def test_unavailable_streams_are_rejected(self):
         for episode in [{'app_only':True,'stream_url':'https://example.test/a.mp4'},{'stream_url':'file:///tmp/a.mp4'},{'stream_url':'https://example.test/player.html'}]:
             with self.assertRaises(ValueError): gz360.playable_url(episode)
+
+    def test_empty_source_playlist_has_clear_unavailability_warning(self):
+        def data(path,payload):
+            return self.data(path,payload) if path.endswith('GetVodInfo') else {'total_vod_vurl':'0','urls':[]}
+        with patch.object(gz360,'call',side_effect=data):
+            response=self.client.get('/api/episodes?id=gz360:156823')
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.json['episodes'],[])
+        self.assertEqual(response.json['total'],0)
+        self.assertIn('no episode playback links',response.json['episode_warning'])
+
+    def test_search_does_not_advertise_declared_episode_count_without_playback(self):
+        rows=[{'vod_id':'1','vod_name':'Unavailable','d_total':24,'vurlList':[]},
+              {'vod_id':'2','vod_name':'Available','d_total':24,'vurlList':[{'vurl_id':10},{'vurl_id':11}]},
+              {'vod_id':'3','vod_name':'Unknown','d_total':24}]
+        with patch.object(gz360,'call',return_value={'list':rows}):items=gz360.search('',1)
+        self.assertEqual(items[0]['episodes'],'No episodes available')
+        self.assertFalse(items[0]['downloadable'])
+        self.assertEqual(items[0]['availability'],'unavailable')
+        self.assertEqual(items[1]['episodes'],'2 episodes')
+        self.assertTrue(items[1]['downloadable'])
+        self.assertEqual(items[2]['availability'],'unknown')
+        self.assertEqual(items[2]['episodes'],'Check episode availability')

@@ -6,6 +6,19 @@ from pathlib import Path
 
 
 def main():
+    if '--check-subtitle-encodings' in sys.argv:
+        # Exercise dynamic codec lookup inside the frozen executable, without
+        # starting a server or accessing the user's videos or configuration.
+        from subtitle_formats import import_subtitles
+        checked = []
+        for encoding, text in [('utf-8-sig', '你好'), ('utf-16', '你好'), ('utf-16-le', '你好'), ('utf-16-be', '你好'), ('gb18030', '你好，今天的天气很好。'), ('big5', '你好，今天的天氣很好。')]:
+            data = ('1\n00:00:01,000 --> 00:00:02,000\n' + text + '\n').encode(encoding)
+            parsed = import_subtitles(data, 'check.srt')
+            if len(parsed['segments']) != 1 or parsed['segments'][0]['text'] != text:
+                raise RuntimeError('Packaged subtitle encoding check failed: ' + encoding)
+            checked.append(encoding)
+        print(json.dumps({'subtitle_encodings': checked, 'ok': True}))
+        return
     # Keep all subprocesses in a separate group so Quit stops FFmpeg as well.
     if os.getpgrp() != os.getpid():
         os.setsid()

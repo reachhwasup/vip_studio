@@ -9,6 +9,7 @@ class SubtitleJobStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as db:
             db.execute('CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+            db.execute('CREATE TABLE IF NOT EXISTS subtitle_analysis (video TEXT PRIMARY KEY, revision TEXT NOT NULL, payload TEXT NOT NULL)')
 
     def connect(self):
         return sqlite3.connect(self.path, timeout=10)
@@ -33,3 +34,19 @@ class SubtitleJobStore:
             except (ValueError, TypeError):
                 continue
         return sorted(jobs, key=lambda job: job.get('created_at', 0))
+
+    def save_analysis(self, video, revision, report):
+        with self.connect() as db:
+            db.execute('INSERT OR REPLACE INTO subtitle_analysis (video, revision, payload) VALUES (?, ?, ?)',
+                       (video, revision, json.dumps(report, ensure_ascii=False)))
+
+    def load_analysis(self, video, revision):
+        with self.connect() as db:
+            row = db.execute('SELECT payload FROM subtitle_analysis WHERE video = ? AND revision = ?', (video, revision)).fetchone()
+        if row:
+            try:
+                data = json.loads(row[0])
+                return data if isinstance(data, dict) else {}
+            except (ValueError, TypeError):
+                pass
+        return {}

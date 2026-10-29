@@ -1,6 +1,7 @@
 (() => {
   const el = id => document.getElementById(id);
   let items = [], selected = null, requestId = 0;
+  let libraryJobs = new Map();
   const video = el('libraryVideo');
   let selectedEpisode = null;
   const subtitleJobs = new Map();
@@ -18,11 +19,23 @@
   }
   function rememberSelect(id, key, fallback) {
     const control = el(id), stored = readSetting(key, fallback);
-    control.value = Array.from(control.options).some(option => option.value === stored) ? stored : fallback;
+    if (id === 'subtitleMethod') vipSubtitleOptions.restore(control, stored);
+    else control.value = Array.from(control.options).some(option => option.value === stored) ? stored : fallback;
     control.addEventListener('change', () => writeSetting(key, control.value));
   }
-  rememberSelect('subtitleMethod', 'vip_subtitle_method', 'auto');
+  rememberSelect('subtitleMethod', 'vip_subtitle_method', 'recommended');
   rememberSelect('subtitleLanguage', 'vip_subtitle_language', 'zh');
+  rememberSelect('subtitleCpuMode', 'vip_subtitle_cpu', '2');
+  function updateSubtitleOptions() {
+    const method = el('subtitleMethod').value;
+    const description = vipSubtitleOptions.describe(method, el('subtitleLanguage'));
+    el('subtitleLanguageHint').textContent = description.languageHint;
+    el('subtitleMethodHint').textContent = description.hint;
+    el('subtitleCpuHint').textContent = {'1': 'Keeps more CPU available for other apps.', '2': 'Good balance for everyday use.', '4': 'Uses more CPU while processing.'}[el('subtitleCpuMode').value];
+  }
+  el('subtitleMethod').addEventListener('change', updateSubtitleOptions);
+  el('subtitleCpuMode').addEventListener('change', updateSubtitleOptions);
+  updateSubtitleOptions();
   rememberSelect('librarySort', 'vip_library_sort', 'recent');
   rememberSelect('librarySpeed', 'vip_playback_speed', '1');
   for (const [id, key, fallback] of [['libraryCaptions', 'vip_show_captions', '1'], ['libraryAutoplay', 'vip_autoplay', '0']]) {
@@ -67,10 +80,15 @@
     const busy = job && ['queued', 'running', 'starting'].includes(job.status);
     button.disabled = !episode || !!busy;
     el('reviewLibrarySubtitles').disabled = !episode?.subtitle_url || !!busy;
-    button.textContent = busy ? (job.status === 'running' ? (job.stage || 'Processing subtitles…') : 'Queued…') : episode && episode.subtitle_url ? 'Regenerate subtitles' : 'Create subtitles';
-    const status = !episode ? 'Choose an episode.' : job?.status === 'error' ? job.error : job?.status === 'done' ? `${job.captions} captions saved · ${job.method === 'hybrid' ? `Captions + speech · ${job.phrase_joins || 0} phrase breaks refined · ${job.audio_added || 0} gaps recovered · ${job.review_count || 0} speech lines to review` : job.method === 'picture' ? 'Read from video' : 'From speech recognition'}${job.warnings?.length ? ' · '+job.warnings.join(' ') : ''}` : busy ? (job.retrying ? 'Reconnecting to subtitle processing. Your job may still be running.' : 'Processing locally. You can keep browsing while this finishes.') : episode.subtitle_url ? 'SRT available for this episode.' : 'No subtitle file saved yet.';
+    button.textContent = busy ? (job.status === 'running' ? 'Processing…' : 'Queued…') : episode && episode.subtitle_url ? 'Regenerate subtitles' : 'Create subtitles';
+    const status = !episode ? 'Choose an episode.' : job?.status === 'error' ? job.error : job?.status === 'done' ? `${job.quality_state === 'needs_review' ? 'Saved · needs review' : 'Saved'} · ${job.captions} captions · ${job.method === 'hybrid' ? `${job.speech_engine === 'paraformer' ? 'OCR + Paraformer' : 'Captions + speech'} · ${job.phrase_joins || 0} phrase breaks refined · ${job.audio_added || 0} gaps recovered · ${job.review_count || 0} speech lines to review` : job.method === 'picture' ? 'Read from video' : job.method === 'funasr' ? 'Chinese phrases · Paraformer' : 'From speech recognition'}${job.warnings?.length ? ' · '+job.warnings.join(' ') : ''}` : busy ? (job.retrying ? 'Reconnecting to subtitle processing. Your job may still be running.' : 'Processing locally. You can keep browsing while this finishes.') : episode.subtitle_url ? 'SRT available for this episode.' : 'No subtitle file saved yet.';
     const percent = Number.isFinite(job?.progress) ? Math.round(job.progress) : null;
     el('librarySubtitleStatus').textContent = busy ? (job.status === 'queued' ? 'Waiting for subtitle worker…' : (job.stage || 'Processing subtitles…') + (percent !== null ? ` · ${percent}%` : '') + (job.total ? ` · ${job.completed}/${job.total} images` : '')) : status;
+    const badge = el('librarySubtitleBadge');
+    badge.dataset.state = busy ? 'busy' : job?.status === 'error' ? 'error' : job?.quality_state === 'needs_review' ? 'review' : episode?.subtitle_url ? 'saved' : 'empty';
+    badge.textContent = {busy: job?.status === 'queued' ? 'Queued' : 'Processing', error: 'Failed', review: 'Needs review', saved: 'SRT saved', empty: 'No SRT'}[badge.dataset.state];
+    el('libraryCaptions').disabled = !episode?.subtitle_url;
+    el('librarySubtitleStatus').parentElement.classList.toggle('is-active', !!busy || job?.status === 'error');
     const progress = el('librarySubtitleProgress'); progress.hidden = !busy;
     if (job?.status === 'queued') progress.value = 0;
     else if (percent !== null && job?.status === 'running') progress.value = percent;
@@ -93,7 +111,7 @@
         items.forEach(drama => drama.episodes.forEach(episode => { if (episode.url === url) episode.subtitle_url = data.subtitle_url; }));
         if (selectedEpisode?.url === url) { selectedEpisode.subtitle_url = data.subtitle_url; refreshTrack(); }
         render();
-        toast(`Subtitles ready: ${data.title} · ${data.captions} captions`, 'success');
+        toast(`Subtitles ${data.quality_state === 'needs_review' ? 'saved — review recommended' : 'ready'}: ${data.title} · ${data.captions} captions`, data.quality_state === 'needs_review' ? 'warning' : 'success');
         notifyDone('Subtitles ready', `${data.title} · ${data.captions} captions`);
       } else if (data.status === 'error') toast('Subtitle regeneration failed: ' + data.error, 'error');
       else setTimeout(() => watchSubtitleJob(url, data), 1500);
@@ -116,7 +134,7 @@
     askNotifyPermission();
     subtitleJobs.set(episode.url, {status: 'starting'}); renderSubtitleStatus();
     try {
-      const response = await fetch('/api/subtitles/regenerate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: episode.url, mode: el('subtitleMethod').value, language: el('subtitleLanguage').value})});
+      const response = await fetch('/api/subtitles/regenerate', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({url: episode.url, mode: el('subtitleMethod').value, language: el('subtitleLanguage').value, cpu_threads: Number(el('subtitleCpuMode').value)})});
       const data = await vipReadJSON(response);
       if (!response.ok) throw new Error(data.error || 'Could not start subtitle regeneration.');
       subtitleJobs.set(episode.url, data); rememberSubtitleJobs(); renderSubtitleStatus();
@@ -175,17 +193,37 @@
   }
   el('playerEpisodeSearch').oninput = filterPlayerEpisodes;
   el('playerCurrentEpisode').onclick = () => { el('playerEpisodeSearch').value = ''; filterPlayerEpisodes(); revealCurrentEpisode(); };
+  const compactPlayer = window.matchMedia('(max-width: 980px)');
   function showEpisodePanel(show) {
     el('libraryDialog').classList.toggle('episodes-hidden', !show);
     el('playerEpisodeSidebar').hidden = !show;
     el('togglePlayerEpisodes').setAttribute('aria-expanded', String(show));
+    el('playerEpisodeBackdrop').hidden = !show || !compactPlayer.matches;
+    document.querySelector('#libraryDialog .player-main').inert = show && compactPlayer.matches;
     if (show) requestAnimationFrame(revealCurrentEpisode);
   }
-  el('togglePlayerEpisodes').onclick = () => showEpisodePanel(el('playerEpisodeSidebar').hidden);
+  el('togglePlayerEpisodes').onclick = () => {
+    const show = el('playerEpisodeSidebar').hidden;
+    showEpisodePanel(show);
+    if (show && compactPlayer.matches) el('playerEpisodeSearch').focus({preventScroll: true});
+  };
+  function closeEpisodeDrawer() { showEpisodePanel(false); el('togglePlayerEpisodes').focus({preventScroll: true}); }
+  el('playerEpisodeBackdrop').onclick = closeEpisodeDrawer;
+  el('libraryDialog').addEventListener('keydown', event => {
+    if (event.key === 'Escape' && compactPlayer.matches && !el('playerEpisodeSidebar').hidden) {
+      event.preventDefault(); event.stopPropagation(); closeEpisodeDrawer();
+    }
+  });
+  el('libraryDialog').addEventListener('cancel', event => {
+    if (compactPlayer.matches && !el('playerEpisodeSidebar').hidden) { event.preventDefault(); closeEpisodeDrawer(); }
+  });
+  compactPlayer.addEventListener('change', () => {
+    if (selected) showEpisodePanel(!compactPlayer.matches && selected.episodes.length > 1);
+  });
   function openDrama(drama) {
     if (!drama.episodes.length) return;
     selected = drama;
-    showEpisodePanel(drama.episodes.length > 1);
+    showEpisodePanel(!compactPlayer.matches && drama.episodes.length > 1);
     document.querySelector('.player-subtitle-settings').open = false;
     document.querySelector('.player-main').scrollTop = 0;
     el('libraryTitle').textContent = drama.title;
@@ -198,7 +236,7 @@
       button.title = episode.title; button.setAttribute('aria-label', episode.title);
       button.dataset.search = (episode.title + ' ' + Number(number)).toLocaleLowerCase();
       button.append(node('span', 'EP ' + number, 'player-episode-number'), node('small', episode.subtitle_url ? 'SRT' : 'Video', 'player-episode-caption'));
-      button.onclick = () => play(episode, button);
+      button.onclick = () => { play(episode, button); if (compactPlayer.matches) closeEpisodeDrawer(); };
       el('libraryEpisodes').append(button);
     });
     filterPlayerEpisodes();
@@ -230,9 +268,35 @@
       poster.onclick = () => openDrama(drama);
       card.append(poster, node('h2', drama.title), node('p', `${drama.episodes.length} episodes · ${(drama.episodes.reduce((sum, ep) => sum + ep.size, 0) / 1024 ** 3).toFixed(2)} GB`));
       const available = drama.episodes.filter(ep => ep.subtitle_url).length;
-      card.append(node('p', `${available}/${drama.episodes.length} episodes with subtitles`, available === drama.episodes.length ? 'library-caption-count ready' : 'library-caption-count'));
+      const active = drama.episodes.filter(ep => ['queued', 'running'].includes(libraryJobs.get(ep.url)?.status)).length;
+      const needed = drama.episodes.filter(ep => !['queued', 'running'].includes(libraryJobs.get(ep.url)?.status) && (!ep.subtitle_url || libraryJobs.get(ep.url)?.status === 'error')).length;
+      const summary = node('div', '', 'library-subtitle-summary');
+      summary.append(node('strong', `Subtitles · ${available} / ${drama.episodes.length}`));
+      const progress = node('progress'); progress.max = drama.episodes.length; progress.value = available; progress.setAttribute('aria-label', `${available} of ${drama.episodes.length} episodes have saved subtitles`);
+      summary.append(progress, node('small', `${available} saved · ${drama.episodes.length - available} missing${active ? ` · ${active} processing / queued` : ''}`));
+      card.append(summary);
       const ongoing = drama.episodes.some(ep => playback[ep.url]?.time >= 3 && !playback[ep.url]?.completed);
-      const watch = node('button', ongoing ? 'Continue watching' : 'View episodes', 'btn3'); watch.onclick = () => openDrama(drama); card.append(watch);
+      const actions = node('div', '', 'library-card-actions');
+      const watch = node('button', ongoing ? 'Continue watching' : 'View episodes', 'btn3'); watch.onclick = () => openDrama(drama); actions.append(watch);
+      const label = needed ? `Recover subtitles (${needed})` : active ? 'Subtitles processing…' : 'Subtitles complete';
+      const retry = node('button', label, 'btn2'); retry.disabled = !needed;
+      retry.title = 'Create missing subtitles and retry failed episodes for this drama';
+      retry.onclick = async () => {
+        retry.disabled = true; retry.textContent = 'Adding to queue…';
+        try {
+          const response = await fetch('/api/subtitles/recover', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({urls: drama.episodes.map(episode => episode.url), mode: el('subtitleMethod').value, language: el('subtitleLanguage').value, cpu_threads: Number(el('subtitleCpuMode').value)})});
+          const data = await vipReadJSON(response);
+          if (!response.ok) throw new Error(data.error || 'Could not recover subtitles.');
+          const message = `${data.queued} episodes added to the subtitle queue.${data.active ? ` ${data.active} already processing or queued.` : ''}`;
+          const failures = data.failed ? ` ${data.failed} could not be queued. ${data.errors?.[0]?.error || ''}` : '';
+          toast(message + failures, data.failed ? 'error' : 'success');
+          await window.loadLibrary();
+          el('libraryStatus').textContent = message + failures;
+          window.loadSubtitleJobs?.();
+        } catch (error) { el('libraryStatus').textContent = error.message; toast(error.message, 'error'); }
+        finally { retry.disabled = false; retry.textContent = label; }
+      };
+      actions.append(retry); card.append(actions);
       el('libraryGrid').append(card);
     });
   }
@@ -245,11 +309,18 @@
       const data = await vipReadJSON(response);
       if (!response.ok) throw new Error(data.error || 'Could not load library.');
       if (id !== requestId) return;
+      const jobsResponse = await fetch('/api/subtitles/jobs');
+      const jobData = await vipReadJSON(jobsResponse);
+      if (!jobsResponse.ok || !Array.isArray(jobData.jobs)) throw new Error('Could not check subtitle activity. Please refresh Library.');
+      if (id !== requestId) return;
+      libraryJobs = new Map();
+      jobData.jobs.forEach(job => { if (job.video_url && !libraryJobs.has(job.video_url)) libraryJobs.set(job.video_url, job); });
       items = data.items; render();
     } catch (error) { if (id === requestId) el('libraryStatus').textContent = error.message; }
     finally { if (id === requestId) el('refreshLibrary').disabled = false; }
   };
   el('refreshLibrary').onclick = window.loadLibrary;
+  setInterval(() => { if (el('library').classList.contains('active') && !el('refreshLibrary').disabled && Array.from(libraryJobs.values()).some(job => ['queued', 'running'].includes(job.status))) window.loadLibrary(); }, 5000);
   el('librarySearch').oninput = render;
   el('librarySort').addEventListener('change', render);
   el('libraryFilter').onchange = render;

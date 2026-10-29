@@ -111,3 +111,12 @@ test('legacy download reconnects to a replacement active subtitle job by video U
   await context.pollDownloadSubtitles();
   assert.equal(task.subtitleJobId,'replacement');assert.equal(task.subtitleStatus,'running');assert.match(task.msg,/45%/);assert.equal(task.status,'done');
 });
+test('empty Hongguo response pauses the queue with a service message and preserves episodes', async () => {
+  const h = harness(3, 1);
+  h.context.fetch = async () => ({ok:false,data:{code:'hongguo_video_unavailable',error:'Hongguo video service temporarily unavailable: the server returned an empty response.'}});
+  await h.context.startQueue(); await h.flush();
+  assert.equal(h.context.running,false);
+  assert.ok(h.context.tasks.every(task=>task.status==='pending'));
+  assert.match(h.context.tasks[0].msg,/Hongguo returned no video data/);
+  assert.doesNotMatch(h.context.tasks[0].msg,/Network problem/);
+});

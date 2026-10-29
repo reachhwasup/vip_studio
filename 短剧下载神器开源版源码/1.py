@@ -48,7 +48,7 @@ def load_dotenv_file(path: Path) -> None:
 load_dotenv_file(Path(__file__).resolve().parent / ".env")
 
 from flurl.core import core_sixgod
-from hongguo_device import credentials, DeviceConfigurationError
+from hongguo_device import credentials, DeviceConfigurationError, register as register_hongguo, make_identity, PARSER_DEVICE_PROFILE, CONFIG_LOCK
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -481,6 +481,62 @@ def handle_video_request(
         raise exc
 
 
+_CONNECTION_RECOVERY_LOCK = threading.Lock()
+_CONNECTION_RECOVERY_ATTEMPTS = {}
+
+
+def recover_video_connection(video_id, failed_keys, payload):
+    """Validate a replacement registration before saving it; recover once/minute.
+
+    Other download workers reuse the winner's credentials. Configured environment
+    overrides are owned by the caller and must never be replaced automatically.
+    """
+    if os.getenv('DUANJU_DEVICE_ID') or os.getenv('DUANJU_INSTALL_ID'):
+        return None
+    path = get_runtime_base_dir() / 'config.json'
+    with _CONNECTION_RECOVERY_LOCK:
+        def probe(keys):
+            url = build_video_model_url(keys['device_id'], keys['install_id'])
+            url, headers, body = sign_json_request_with_liushen(url, payload, keys)
+            data = json.loads(curl_request(url, headers, body, 30))
+            fallback, model = extract_fallback_api(data, video_id)
+            return fallback, model, keys
+        try:
+            with CONFIG_LOCK:
+                current = get_device_keys()
+            if current != failed_keys:
+                return probe(current)
+            now = time.monotonic()
+            if now - _CONNECTION_RECOVERY_ATTEMPTS.get(str(path), -float('inf')) < 60:
+                return None
+            _CONNECTION_RECOVERY_ATTEMPTS[str(path)] = now
+            identity = make_identity()
+            candidate = register_hongguo(PARSER_DEVICE_PROFILE, identity)
+            recovered = probe(candidate)
+            with CONFIG_LOCK:
+                if get_device_keys() != failed_keys:
+                    return None  # Preserve a connection edited during recovery.
+                config = load_local_config()
+                config.update(candidate)
+                config['hongguo_registration_identity'] = identity
+                config['hongguo_connection_refreshed_at'] = time.time()
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent, delete=False) as handle:
+                    temporary = Path(handle.name)
+                    json.dump(config, handle, ensure_ascii=False, indent=2)
+                try:
+                    temporary.chmod(0o600)
+                    temporary.replace(path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+            return recovered
+        except (requests.RequestException, ValueError, OSError):
+            return None  # Keep the old configuration when validation fails.
+
+
+class VideoServiceUnavailable(RuntimeError):
+    """Hongguo answered the request but supplied no usable video metadata."""
+
+
 def resolve_video_url(
     video_id: str,
     request=None,
@@ -498,6 +554,8 @@ def resolve_video_url(
     last_err: Optional[Exception] = None
 
     for attempt in range(max_retries):
+        if attempt:
+            time.sleep(min(2 ** attempt, 8))
         device_keys = get_device_keys()
         target_url = build_video_model_url(
             device_keys["device_id"], device_keys["install_id"]
@@ -529,17 +587,26 @@ def resolve_video_url(
             time.sleep(0.1)
             continue
 
-        try:
-            data = json.loads(resp)
-        except Exception as exc:
-            last_err = Exception(f"video_model JSON parse failed: {exc}")
-            continue
-
-        try:
-            fallback_api, video_model = extract_fallback_api(data, video_id)
-        except Exception as exc:
-            last_err = exc
-            continue
+        if not resp or not resp.strip():
+            last_err = VideoServiceUnavailable("Hongguo video service temporarily unavailable: the server returned an empty response. Please retry later.")
+            recovered = None
+            if attempt == max_retries - 1:
+                set_progress(video_id, 'Refreshing Hongguo connection')
+                recovered = recover_video_connection(video_id, device_keys, post_payload)
+            if recovered is None:
+                continue
+            fallback_api, video_model, device_keys = recovered
+        else:
+            try:
+                data = json.loads(resp)
+            except (ValueError, UnicodeError):
+                last_err = VideoServiceUnavailable("Hongguo video service temporarily unavailable: the server returned an unreadable response. Please retry later.")
+                continue
+            try:
+                fallback_api, video_model = extract_fallback_api(data, video_id)
+            except Exception as exc:
+                last_err = exc
+                continue
 
         try:
             result = download_and_decrypt_video(
@@ -559,6 +626,8 @@ def resolve_video_url(
             time.sleep(0.1)
             continue
 
+    if isinstance(last_err, VideoServiceUnavailable):
+        raise VideoServiceUnavailable(str(last_err))
     raise Exception(f"Video request failed, retried {max_retries} times: {last_err}")
 
 

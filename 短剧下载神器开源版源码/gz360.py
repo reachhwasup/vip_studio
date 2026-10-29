@@ -66,11 +66,14 @@ def search(keyword, page, category=''):
         tags = ' / '.join(row.get('tags') or [])
         if category and not tid and category.lower() not in (title + ' ' + tags).lower():
             continue
-        count = len(row.get('vurlList') or []) or row.get('d_total') or 1
+        listed = row.get('vurlList')
+        count = len(listed) if isinstance(listed, list) else None
+        unavailable = count == 0
+        episode_label = 'No episodes available' if unavailable else f'{count} episodes' if count is not None else 'Check episode availability'
         items.append({'drama_id': 'gz360:' + sid, 'title': title, 'author': 'GZ360',
-                      'episodes': f'{count} episodes', 'duration': '-', 'online_time': row.get('vod_filmtime') or '-',
+                      'episodes': episode_label, 'duration': '-', 'online_time': row.get('vod_filmtime') or '-',
                       'category': tags, 'source': 'GZ360', 'source_url': BASE + '/videoDetail/' + sid,
-                      'downloadable': True, 'cover': row.get('vod_pic') or '', 'desc': ''})
+                      'downloadable': not unavailable, 'availability': 'unavailable' if unavailable else 'available' if count is not None else 'unknown', 'cover': row.get('vod_pic') or '', 'desc': ''})
     return items
 
 
@@ -105,7 +108,8 @@ def detail(value):
               'cast': [{'name': name, 'role': ''} for name in str(info.get('vod_actor') or '').split(',') if name],
               'release_date': info.get('vod_year') if info.get('vod_year') != '1970-01-01' else '',
               'source_url': BASE + '/videoDetail/' + sid, 'source': 'GZ360',
-              'total': len(episodes), 'episodes': episodes}
+              'total': len(episodes), 'episodes': episodes,
+              'episode_warning': '' if episodes else 'GZ360 lists this title but currently provides no episode playback links. Check the source page or try again later.'}
     with _lock:
         if len(_cache) >= 100:
             _cache.pop(next(iter(_cache)))

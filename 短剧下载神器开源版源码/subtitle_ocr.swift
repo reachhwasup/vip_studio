@@ -60,7 +60,9 @@ func reportProgress(_ count: Int) {
     FileHandle.standardError.write(Data(message.utf8))
 }
 reportProgress(0)
-DispatchQueue.concurrentPerform(iterations: files.count) { index in
+let workers = max(1, min(4, Int(ProcessInfo.processInfo.environment["VIP_SUBTITLE_THREADS"] ?? "2") ?? 2))
+DispatchQueue.concurrentPerform(iterations: min(workers, files.count)) { worker in
+  for index in stride(from: worker, to: files.count, by: workers) {
     let lines = recognise(files[index])
     lock.lock()
     results[index] = lines
@@ -69,6 +71,7 @@ DispatchQueue.concurrentPerform(iterations: files.count) { index in
         reportProgress(completed)
     }
     lock.unlock()
+  }
 }
 
 for (index, name) in files.enumerated() {

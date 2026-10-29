@@ -74,3 +74,129 @@ input[type=checkbox]{min-height:0}
 #libraryDialog .player-episode-sidebar{padding:20px 16px}
 @media(max-width:900px){#libraryDialog .player-layout{grid-template-columns:minmax(0,1fr) 210px}#libraryDialog .player-main{padding:14px}.player-header-actions{gap:5px}#libraryDialog .player-header{padding:14px}#libraryDialog .player-header h2{font-size:14px}}
 @media(max-width:680px){#libraryDialog .player-header{height:auto;min-height:78px;gap:10px;align-items:flex-start}#libraryDialog .player-header-actions{flex-direction:column;align-items:stretch}#libraryDialog .player-header button{height:30px;min-height:30px;font-size:10px}#libraryDialog .player-layout{height:auto}#libraryDialog #libraryVideo{height:32vh}#libraryDialog .player-main{padding:12px}#libraryDialog .player-now h3{font-size:16px}#libraryDialog .player-episode-sidebar{min-height:220px}#libraryDialog .player-subtitle-heading{gap:8px}#libraryDialog .player-preferences{gap:12px}}
+
+/* Episode subtitle tools */
+#libraryDialog .library-subtitles{padding:0;background:#111d2b;border-radius:14px;overflow:hidden;container-type:inline-size}
+#libraryDialog .player-subtitle-heading{padding:16px 18px 10px;gap:12px}
+.subtitle-heading-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#libraryDialog .player-subtitle-heading strong{font-size:14px}
+.subtitle-state{font-size:10px;font-weight:600;line-height:1.5;padding:3px 8px;border-radius:6px;background:#233044;color:#aebed2;white-space:nowrap}
+.subtitle-state[data-state=saved]{background:#17392f;color:#8be0b9}.subtitle-state[data-state=review]{background:#40341e;color:#f5d08a}.subtitle-state[data-state=error]{background:#42282e;color:#ffabb8}.subtitle-state[data-state=busy]{background:#1a3555;color:#9dc8ff}
+#libraryDialog .subtitle-file-actions{gap:12px;flex-wrap:wrap}
+#libraryDialog .subtitle-file-actions a{font-size:11px;white-space:nowrap}
+#libraryDialog .subtitle-visibility-row{display:flex;gap:8px 18px;align-items:center;flex-wrap:wrap;padding:0 18px 12px}
+#libraryDialog .caption-switch{position:relative;display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#d6e3f3;cursor:pointer;margin:0}
+.caption-switch input{position:absolute;opacity:0;width:30px;height:20px;margin:0}.caption-switch-track{width:28px;height:16px;border-radius:12px;background:#41516a;position:relative;transition:background .15s}.caption-switch-track:after{content:'';position:absolute;width:12px;height:12px;left:2px;top:2px;background:#fff;border-radius:50%;transition:transform .15s}.caption-switch input:checked+.caption-switch-track{background:#508fda}.caption-switch input:checked+.caption-switch-track:after{transform:translateX(12px)}.caption-switch input:focus-visible+.caption-switch-track{outline:2px solid #8fc3ff;outline-offset:3px}.caption-switch:has(input:disabled){opacity:.5;cursor:default}
+#libraryDialog .player-caption-hint{font-size:10px;margin:0;color:#91a5bf}
+.subtitle-job-status{padding:0 18px 10px}.subtitle-job-status.is-active{margin:0 18px 12px;padding:10px 12px;background:#182a40;border-radius:8px}
+#libraryDialog #librarySubtitleStatus{font-size:11px;line-height:1.6;margin:0;overflow-wrap:anywhere}
+#libraryDialog #librarySubtitleProgress{display:block;width:100%;height:5px;margin-top:8px;accent-color:#7db7ff}#libraryDialog #librarySubtitleProgress[hidden]{display:none}
+#libraryDialog .player-subtitle-settings{margin:0;padding:0;border-top:1px solid #263447}
+#libraryDialog .player-subtitle-settings summary{display:flex;align-items:center;gap:10px;padding:13px 18px;list-style:none;min-height:44px;box-sizing:border-box}
+.player-subtitle-settings summary::-webkit-details-marker{display:none}
+#libraryDialog .player-subtitle-settings summary .subtitle-settings-title{font-size:12px;font-weight:600;color:#dce9fa;margin:0}
+#libraryDialog .player-subtitle-settings summary .subtitle-settings-description{font-size:10px;color:#8fa4bf;margin:0}
+#libraryDialog .player-subtitle-settings summary .subtitle-settings-chevron{font-size:17px;margin:0 0 0 auto;transition:transform .15s;color:#9fb8d6}
+.player-subtitle-settings[open] .subtitle-settings-chevron{transform:rotate(180deg)}
+.subtitle-generation-body{padding:0 18px 16px}
+#libraryDialog .library-subtitle-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px 16px;margin:0;align-items:start}
+#libraryDialog .library-subtitle-actions label{font-size:11px;gap:6px;min-width:0}
+#libraryDialog .library-subtitle-actions .subtitle-method-field{grid-column:1/-1}
+#libraryDialog .library-subtitle-actions select{height:38px;min-height:38px;padding:0 10px;font-size:12px;background:#0e1928;border-radius:8px;border-color:#314158}
+#libraryDialog .library-subtitle-actions select:disabled{opacity:.65;cursor:not-allowed}
+#libraryDialog .subtitle-method-hint{grid-column:1/-1;margin:-5px 0 2px;font-size:11px;line-height:1.6;color:#a4b8d1}
+.subtitle-field-hint{font-size:10px;line-height:1.5;color:#8fa4bf;min-height:15px}
+.subtitle-generation-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:16px;padding-top:12px;border-top:1px solid #263447}
+.subtitle-generation-footer>span{font-size:10px;color:#8fa4bf;line-height:1.5}
+#libraryDialog .subtitle-generation-footer button{font-size:12px;min-height:36px;padding:8px 14px;white-space:normal;flex-shrink:0;background:#2e6abb;color:#fff;border:1px solid #4a83cf}
+#libraryDialog .subtitle-generation-footer button:disabled{background:#23364c;color:#9eafc6;border-color:#314158}
+#libraryDialog .player-now{margin:12px 0 8px}#libraryDialog .player-preferences{padding:4px 0 8px;border:0}#libraryDialog #libraryPlaybackStatus:empty{display:none}#libraryDialog #libraryPlaybackStatus{font-size:11px;margin:2px 0 10px;color:#94aac6}
+@container(max-width:430px){#libraryDialog .player-subtitle-heading{align-items:flex-start;flex-direction:column}#libraryDialog .subtitle-file-actions{width:100%;justify-content:space-between}#libraryDialog .player-subtitle-settings summary .subtitle-settings-description{display:none}#libraryDialog .library-subtitle-actions{grid-template-columns:minmax(0,1fr)}.subtitle-generation-footer{align-items:stretch;flex-direction:column}.subtitle-generation-footer button{width:100%}}
+@media(prefers-reduced-motion:reduce){.caption-switch-track,.caption-switch-track:after,.subtitle-settings-chevron{transition:none}}
+
+/* The dialog owns its height; only the viewing area and episode list scroll. */
+#libraryDialog.library-player[open]{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(1400px,calc(100vw - 32px));max-width:calc(100vw - 32px);height:min(960px,calc(100dvh - 32px));max-height:calc(100dvh - 32px);overflow:hidden;box-sizing:border-box}
+#libraryDialog .player-header{height:auto;min-height:72px;box-sizing:border-box;position:relative;top:auto;z-index:6;flex-wrap:nowrap}
+#libraryDialog .player-header>div:first-child{flex:1;min-width:0}
+#libraryDialog .player-header-actions{flex-direction:row;align-items:center;flex:none}
+#libraryDialog .player-layout{position:relative;display:grid;height:auto;min-height:0;grid-template-columns:minmax(0,1fr) 250px;overflow:hidden}
+#libraryDialog.episodes-hidden .player-layout{grid-template-columns:minmax(0,1fr)}
+#libraryDialog .player-main{min-height:0;overflow:auto;overscroll-behavior:contain;scroll-padding:16px}
+#libraryDialog #libraryVideo{height:clamp(160px,46dvh,520px);max-height:none;max-width:100%}
+#libraryDialog .player-episode-sidebar{min-height:0;overflow:hidden}
+#libraryDialog .library-episodes{min-height:0;max-height:none;grid-template-columns:repeat(3,minmax(0,1fr));flex:1;overscroll-behavior:contain}
+#libraryDialog .player-episode[hidden]{display:none}
+#libraryDialog .player-header h2{overflow-wrap:anywhere}
+.player-episode-backdrop{display:none}
+@media(max-width:980px){
+  #libraryDialog .player-layout{grid-template-columns:minmax(0,1fr)}
+  #libraryDialog .player-header{padding:12px 16px;gap:12px}
+  #libraryDialog .player-main{padding:16px}
+  #libraryDialog .player-episode-sidebar{position:absolute;inset:0 0 0 auto;width:min(320px,calc(100% - 36px));box-sizing:border-box;z-index:5;border-top:0;border-left:1px solid #3b4e69;padding:18px 16px;box-shadow:-16px 0 40px #0006;background:#121c2a}
+  #libraryDialog .player-episode-backdrop:not([hidden]){display:block;position:absolute;inset:0;width:100%;height:100%;min-height:0;border:0;border-radius:0;background:#03070c9c;z-index:4;cursor:pointer}
+  #libraryDialog #libraryVideo{height:clamp(160px,40dvh,420px)}
+  #libraryDialog .player-episode{min-height:52px;height:52px}
+  #libraryDialog .player-episode-number{font-size:12px}
+  #libraryDialog .player-episode-caption{font-size:10px}
+  #libraryDialog .player-episode-heading h3{font-size:17px}
+  #libraryDialog #playerEpisodeSearch{height:44px;min-height:44px;font-size:14px}
+}
+@media(max-width:600px){
+  #libraryDialog.library-player[open]{width:100vw;max-width:100vw;height:100dvh;max-height:100dvh;margin:0;border-radius:0;border:0}
+  #libraryDialog .player-header{padding:10px 12px;min-height:68px;gap:8px;padding-top:max(10px,env(safe-area-inset-top))}
+  #libraryDialog .player-header h2{font-size:14px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal;line-height:1.4}
+  #libraryDialog .player-header .player-eyebrow{font-size:8px;letter-spacing:1px;margin-bottom:3px}
+  #libraryDialog .player-header-actions{gap:6px}
+  #libraryDialog .player-header button{height:40px;min-height:40px;font-size:11px;padding:0 10px}
+  #libraryDialog #closeLibraryPlayer{font-size:0;width:40px;padding:0}
+  #libraryDialog #closeLibraryPlayer span{font-size:22px;margin:0}
+  #libraryDialog .player-main{padding:10px 12px max(18px,env(safe-area-inset-bottom));scroll-padding:12px}
+  #libraryDialog #libraryVideo{height:clamp(170px,36dvh,360px)}
+  #libraryDialog .player-now{gap:8px;align-items:center;margin:12px 0 10px}
+  #libraryDialog .player-now h3{font-size:16px}
+  #libraryDialog .player-now button{height:40px;min-height:40px;font-size:11px}
+  #libraryDialog .player-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin:0 0 10px}
+  #libraryDialog .player-episode-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+  #libraryDialog .player-episode-controls button{width:100%;min-width:0;min-height:44px;height:auto;padding:8px 4px;font-size:11px;white-space:normal;line-height:1.4}
+  #libraryDialog .player-speed{justify-content:space-between;font-size:12px;width:100%}
+  #libraryDialog .player-speed select{min-height:40px;height:40px;min-width:100px;font-size:14px}
+  #libraryDialog .player-preferences{min-height:32px;margin:0 0 8px}
+  #libraryDialog .player-preferences label{font-size:12px;min-height:36px}
+  #libraryDialog .library-subtitles{margin-top:10px;padding:0}
+  #libraryDialog .player-subtitle-heading{padding:14px 12px 10px}
+  #libraryDialog .subtitle-file-actions{gap:8px}
+  #libraryDialog .subtitle-file-actions button{height:40px;min-height:40px;font-size:12px}
+  #libraryDialog .subtitle-file-actions a{display:inline-flex;align-items:center;min-height:40px;font-size:12px}
+  #libraryDialog .subtitle-visibility-row{padding:0 12px 12px}
+  #libraryDialog .caption-switch{min-height:36px;font-size:12px}
+  #libraryDialog .player-caption-hint{font-size:11px}
+  #libraryDialog .subtitle-job-status{padding:0 12px 12px}
+  #libraryDialog .subtitle-job-status.is-active{margin:0 12px 12px;padding:10px}
+  #libraryDialog #librarySubtitleStatus{font-size:12px}
+  #libraryDialog .player-subtitle-settings summary{min-height:48px;padding:12px}
+  #libraryDialog .subtitle-generation-body{padding:0 12px 14px}
+  #libraryDialog .library-subtitle-actions{grid-template-columns:minmax(0,1fr);gap:12px}
+  #libraryDialog .library-subtitle-actions label{font-size:12px}
+  #libraryDialog .library-subtitle-actions select{height:44px;min-height:44px;font-size:13px}
+  #libraryDialog .subtitle-method-hint,.subtitle-field-hint{font-size:11px}
+  #libraryDialog .subtitle-generation-footer{align-items:stretch;flex-direction:column}
+  #libraryDialog .subtitle-generation-footer button{width:100%;min-height:44px;font-size:13px}
+}
+@media(max-height:500px) and (min-width:601px){
+  #libraryDialog.library-player[open]{height:100dvh;max-height:100dvh;width:100vw;max-width:100vw;margin:0;border-radius:0}
+  #libraryDialog .player-header{min-height:54px;padding:6px 14px}
+  #libraryDialog #libraryVideo{height:55dvh;min-height:120px}
+}
+
+/* Library recovery makes missing files distinct from failed job history. */
+.library-card{display:flex;flex-direction:column;gap:10px}.library-card h2{margin:4px 0 0}.library-card>p{margin:0}.library-subtitle-summary{display:grid;gap:9px;margin:6px 0 4px;padding:13px;background:#0b142155;border:1px solid var(--line);border-radius:10px}.library-subtitle-summary strong{font-size:12px;font-weight:600}.library-subtitle-summary small{font-size:11px;color:var(--muted);line-height:1.6}.library-subtitle-summary progress{width:100%;height:5px;accent-color:#78adff}.library-card-actions{display:grid;gap:8px;margin-top:auto;padding-top:8px}.library-card-actions button{width:100%;min-height:38px;height:auto;white-space:normal;font-size:12px;padding:10px}.library-card-actions button:disabled{opacity:.65}
+.download-caption-settings{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);gap:14px;margin:20px 0 10px}.download-caption-settings label{min-width:0}.download-caption-settings select{width:100%;min-width:0;font-size:13px}#downloadSubtitleSettingsStatus{font-size:12px;margin:12px 0}@media(max-width:760px){.download-caption-settings{grid-template-columns:minmax(0,1fr)}.download-caption-settings select{min-height:44px}}
+
+/* Subtitle activity uses compact rows, with review separate from ready. */
+.subtitle-queue-actions{display:flex;gap:8px;flex-wrap:wrap}.subtitle-queue-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px}.subtitle-total{display:flex;flex-direction:column;align-items:flex-start;gap:7px;padding:16px 18px;height:auto;white-space:normal;text-align:left;background:#141e2c;border:1px solid var(--line);border-radius:12px}.subtitle-total>span{font-size:12px;color:#adbed4}.subtitle-total strong{font-size:28px;line-height:1.2}.subtitle-total small{font-size:11px;color:#8fa4bf;font-weight:400}.subtitle-total.active strong{color:#92baff}.subtitle-total.review strong{color:#edc38b}.subtitle-total.done strong{color:#79d3b0}.subtitle-total.error strong{color:#ee9eaa}.subtitle-total[aria-pressed=true]{border-color:#82b1ff88;background:#203149}.subtitle-job-filters{flex-wrap:wrap}.subtitle-job-filters input{flex:1;min-width:180px;max-width:460px;height:39px;font-size:13px}.subtitle-list-heading{font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:#869dbd;margin:12px 0 2px}.subtitle-job-list{gap:8px}.subtitle-job.subtitle-job-row{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(180px,1fr) auto;align-items:center;gap:20px;padding:16px 18px;border-radius:10px;background:#141e2c}.subtitle-job-row.running{border-color:#79aaff55;background:#17253a}.subtitle-job-identity{display:flex;align-items:center;gap:14px;min-width:0}.subtitle-job-identity>div{min-width:0}.subtitle-job-row h3{font-size:13px;line-height:1.5;margin:0}.subtitle-job-row small{font-size:11px;margin-top:5px;color:#839ab9}.subtitle-episode-marker{flex:none;display:grid;place-items:center;min-width:58px;min-height:46px;padding:5px 8px;border:1px solid #9fb9df18;border-radius:8px;color:#a8c8f4;background:#76a9f30b;font-size:11px;font-weight:600}.subtitle-job-row .pill{display:inline-block;font-size:10px;padding:4px 8px;border-radius:5px}.subtitle-job-row .pill.review{background:#dca7511c;color:#eac28e}.subtitle-job-row .pill.running{background:#78aaff1c;color:#a6c8ff}.subtitle-job-row .pill.error{background:#ef7c8f17;color:#efa8b4}.subtitle-row-status{font-size:11px;line-height:1.6;color:#91a5c1;margin:5px 0 0}.subtitle-job-row progress{display:block;width:100%;height:4px;margin:8px 0 0}.subtitle-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:14px;min-width:108px}.subtitle-job-row a{font-size:11px;margin:0;white-space:nowrap}.subtitle-row-actions button{font-size:11px;min-height:32px;height:32px;padding:0 10px}.subtitle-error-details{position:relative;font-size:11px;color:#d0adba}.subtitle-error-details summary{cursor:pointer}.subtitle-error-details p{max-width:280px;overflow-wrap:anywhere;line-height:1.6;margin-top:8px}.subtitle-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;font-size:12px;color:#94a8c3}.subtitle-pagination>div{display:flex;gap:8px}.subtitle-pagination button{font-size:12px}.subtitle-job-list+.subtitle-pagination+.hint{margin-top:16px;font-size:12px;line-height:1.7}
+@media(max-width:1050px){.subtitle-job.subtitle-job-row{grid-template-columns:minmax(0,1fr) minmax(150px,.8fr);gap:12px}.subtitle-row-actions{grid-column:1/-1;justify-content:flex-start;padding-left:72px}.subtitle-total{padding:14px}.subtitle-total small{font-size:10px}}
+@media(max-width:680px){.subtitle-queue-heading{flex-direction:column;gap:12px}.subtitle-queue-summary{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.subtitle-total strong{font-size:24px}.subtitle-job.subtitle-job-row{grid-template-columns:minmax(0,1fr);padding:14px;gap:12px}.subtitle-job-detail{padding-left:72px}.subtitle-row-actions{grid-column:auto}.subtitle-job-filters input{max-width:none;flex-basis:100%}.subtitle-pagination{font-size:11px}}
+
+#subtitleJobList{max-height:max(280px,calc(100dvh - 490px));overflow-y:auto;padding-right:5px;scrollbar-width:thin;scrollbar-color:#3b526e transparent;scrollbar-gutter:stable}.subtitle-list-heading{position:sticky;top:0;z-index:1;background:var(--bg);padding:9px 0;margin:0}@media(max-width:680px){#subtitleJobList{max-height:58dvh}}
+
+.episode-unavailable{grid-column:1/-1;width:100%;padding:22px;border:1px solid var(--line);background:#101a28;border-radius:10px}.episode-unavailable strong{font-size:14px;color:#d1dced}.episode-unavailable p{font-size:13px;line-height:1.7;color:#95a8c2;margin-top:8px}

@@ -78,7 +78,7 @@ class DownloadPathTests(unittest.TestCase):
         with self.client.get(url) as response:
             self.assertEqual(response.data, b'video')
         subtitle = video.with_suffix('.srt')
-        def create(path, ffmpeg, report=None):
+        def create(path, ffmpeg, report=None, **options):
             self.assertEqual(path, video)
             subtitle.write_text('captions')
             return subtitle, 'picture'

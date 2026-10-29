@@ -14,6 +14,8 @@ Environment overrides:
   WHISPER_VAD    path to the silero VAD model   (default: ~/.cache/whisper-cpp/ggml-silero-v5.1.2.bin)
 """
 import collections
+import hashlib
+from difflib import SequenceMatcher
 import copy
 from contextlib import contextmanager
 import re
@@ -52,30 +54,49 @@ _strip_cache: dict = {}
 _analysis_cache: dict = {}
 
 
+_review_store = None
+
+
+def configure_review_store(store):
+    """Use the app's SQLite job database; never add report files to video folders."""
+    global _review_store
+    _review_store = store
+
+
+def analysis_revision(srt):
+    return f"{srt.stat().st_mtime_ns}:{hashlib.sha256(srt.read_bytes()).hexdigest()}"
+
+
 def subtitle_analysis(video_path):
-    """Session-only review hints; never create a JSON sidecar. Caller holds _lock."""
+    """Review hints for this exact SRT revision, including across app restarts."""
     video_path = Path(video_path)
-    saved = _analysis_cache.get(str(video_path.resolve()))
+    key = str(video_path.resolve())
+    srt = video_path.with_suffix('.srt')
+    saved = _analysis_cache.get(key)
     try:
-        if saved and saved[0] == video_path.with_suffix('.srt').stat().st_mtime_ns:
+        if saved and saved[0] == srt.stat().st_mtime_ns:
             return copy.deepcopy(saved[1])
-    except OSError:
+        if _review_store is not None and _review_store.path.exists():
+            return _review_store.load_analysis(key, analysis_revision(srt))
+    except (OSError, ValueError):
         pass
     return {}
-
 
 
 _progress_state = threading.local()
 
 
 @contextmanager
-def _progress_session(callback):
+def _progress_session(callback, cpu_threads=2):
     previous = getattr(_progress_state, 'callback', None)
+    previous_threads = getattr(_progress_state, 'cpu_threads', 2)
     _progress_state.callback = callback
+    _progress_state.cpu_threads = cpu_threads
     try:
         yield
     finally:
         _progress_state.callback = previous
+        _progress_state.cpu_threads = previous_threads
 
 
 def _notify_progress(stage, percent=None, completed=None, total=None):
@@ -96,14 +117,25 @@ def _ocr_stage(command):
 
 
 def _run(command: list, capture: bool = False) -> str:
+    environment = dict(os.environ)
+    threads = str(getattr(_progress_state, 'cpu_threads', 2))
+    for name in ('VIP_SUBTITLE_THREADS', 'OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS'):
+        environment[name] = threads
     streaming = getattr(_progress_state, 'callback', None) and (capture or '-pp' in command)
     if streaming:
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace')
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors='replace', env=environment)
         output, errors = [], collections.deque(maxlen=10)
         for line in process.stdout:
             ocr = re.match(r'VIP_OCR_PROGRESS ([0-9]+)/([0-9]+)', line.strip())
             speech = re.search(r'progress\s*=\s*([0-9]+)%', line)
-            if ocr:
+            asr_progress = re.match(r'VIP_ASR_PROGRESS ([0-9]+)/([0-9]+)', line.strip())
+            if asr_progress:
+                completed, total = map(int, asr_progress.groups())
+                if total > 0 and 0 <= completed <= total:
+                    _notify_progress(f'Transcribing Chinese phrases ({completed}/{total} speech sections)', round(completed / total * 100, 1))
+            elif line.startswith('VIP_ASR_STAGE '):
+                _notify_progress(line.strip().removeprefix('VIP_ASR_STAGE '), None)
+            elif ocr:
                 completed, total = map(int, ocr.groups())
                 if total > 0 and 0 <= completed <= total:
                     _notify_progress(_ocr_stage(command), round(completed / total * 100, 1), completed, total)
@@ -119,12 +151,15 @@ def _run(command: list, capture: bool = False) -> str:
                         output.append(line)
             else:
                 errors.append(line.strip())
+        close = getattr(process.stdout, 'close', None)
+        if callable(close):
+            close()
         if process.wait() != 0:
             raise RuntimeError(f"{Path(command[0]).name} failed: {(errors[-1] if errors else 'no error output')[:200]}")
         return ''.join(output)
     done = subprocess.run(
         command, stdout=subprocess.PIPE if capture else subprocess.DEVNULL, stderr=subprocess.PIPE,
-        text=True, errors="replace",
+        text=True, errors="replace", env=environment,
     )
     if done.returncode != 0:
         tail = (done.stderr or "").strip().splitlines()[-1:] or ["no error output"]
@@ -392,6 +427,34 @@ def _write_srt(cues: list, srt_path: Path) -> None:
 
 # ───────────────────────── audio method ─────────────────────────
 
+FUNASR_PYTHON = Path(os.getenv('FUNASR_PYTHON', str(Path.home() / '.local/share/short-drama-downloader/funasr-venv/bin/python')))
+FUNASR_ROOT = Path.home() / '.cache' / 'short-drama-downloader' / 'funasr'
+
+
+def _funasr_missing() -> str:
+    if not FUNASR_PYTHON.is_file():
+        return 'The optional Chinese speech engine is not installed.'
+    if any(not (FUNASR_ROOT / name / 'model.pt').is_file() for name in ('paraformer-zh', 'fsmn-vad', 'ct-punc', 'fa-zh')):
+        return 'The Chinese speech models have not finished downloading.'
+    return ''
+
+
+def _subtitles_from_funasr(video_path, ffmpeg_bin, tmp, srt_path):
+    reason = _funasr_missing()
+    if reason:
+        raise RuntimeError(reason)
+    wav = tmp / 'funasr-audio.wav'
+    output = tmp / 'funasr-result.json'
+    _notify_progress('Preparing audio for Chinese transcription', None)
+    _run([ffmpeg_bin, '-y', '-v', 'error', '-i', str(video_path), '-vn',
+          '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', str(wav)])
+    _run([str(FUNASR_PYTHON), str(Path(__file__).with_name('funasr_worker.py')), str(wav), str(output)], capture=True)
+    rows = normalize_segments(json.loads(output.read_text(encoding='utf-8')))
+    if not rows:
+        raise RuntimeError('No Chinese speech was recognised; the existing subtitles were kept.')
+    srt_path.write_text(export_subtitles(rows, 'srt'), encoding='utf-8')
+
+
 def _whisper_missing() -> str:
     if not shutil.which(WHISPER_BIN):
         return "whisper.cpp is not installed (run: brew install whisper.cpp)"
@@ -409,7 +472,7 @@ def _subtitles_from_audio(video_path: Path, ffmpeg_bin: str, tmp: Path, srt_path
 
     out_base = tmp / "subtitles"
     command = [WHISPER_BIN, "-m", str(MODEL_PATH), "-f", str(wav_path), "-l", language,
-               "-ml", "16", "-osrt", "-of", str(out_base), "-pp"]
+               "-osrt", "-of", str(out_base), "-pp"]
     if VAD_MODEL_PATH.is_file():
         # Voice detection keeps lines from starting during silence or music.
         command += ["--vad", "--vad-model", str(VAD_MODEL_PATH)]
@@ -432,6 +495,74 @@ def unavailable_reason() -> str:
     return _whisper_missing()
 
 
+def refine_picture_phrases(picture, speech):
+    """Use speech boundaries only when the complete on-screen wording agrees.
+
+    Never distribute words proportionally or merge based only on a short gap.
+    Disagreements remain untouched for the existing speech review workflow.
+    """
+    result = [dict(cue) for cue in picture]
+    grouped = 0
+    for spoken in speech:
+        start, end = spoken['start_time'], spoken['end_time']
+        if not 0 < end - start <= 8:
+            continue
+        indexes = [i for i, cue in enumerate(result)
+                   if cue['start_time'] < end and cue['end_time'] > start]
+        if len(indexes) == 1:
+            i = indexes[0]
+            row = result[i]
+            # Borrow punctuation only for the same complete Chinese utterance.
+            # Keep OCR's actual characters, spaces, speaker and timestamps.
+            if (abs(row['start_time'] - start) <= 0.6
+                    and abs(row['end_time'] - end) <= 0.6
+                    and re.search(r'[\u3400-\u9fff]', row['text'])
+                    and _content(row['text']) == _content(spoken['text'])
+                    and not re.search(r'[.!?。！？។…]', row['text'])
+                    and not re.search(r'\n|^(?:[-–—]\s|[^:：]{1,24}[:：])', row['text'])
+                    and not re.search(r'\n|^(?:[-–—]\s|[^:：]{1,24}[:：])', spoken['text'])):
+                # Only add a final sentence mark; internal punctuation can imply
+                # unverified sentence/speaker boundaries.
+                ending = re.search(r'([。！？!?])["”’\')]*$', spoken['text'])
+                if ending:
+                    result[i] = dict(row, text=row['text'].rstrip('，,；; ') + ending.group(1))
+            continue
+        if len(indexes) < 2:
+            continue
+        rows = [result[i] for i in indexes]
+        # Both sources must agree about the whole phrase and its time window.
+        if abs(rows[0]['start_time'] - start) > 0.6 or abs(rows[-1]['end_time'] - end) > 0.6:
+            continue
+        if any(not -0.05 <= b['start_time'] - a['end_time'] <= 0.5
+               for a, b in zip(rows, rows[1:])):
+            continue
+        if any(re.search(r'[.!?。！？។…]["”’\')]*$', row['text']) for row in rows[:-1]):
+            continue
+        # Dialogue markers may signal a speaker change not represented by ASR.
+        if any(re.match(r'^(?:[-–—]\s|[^:：]{1,24}[:：])', row['text']) for row in rows):
+            continue
+        if len({row.get('speaker') for row in rows if row.get('speaker')}) > 1:
+            continue
+        if not all(row.get('speaker') for row in rows):
+            continue
+        original = ''.join(row['text'] for row in rows)
+        source, heard = _content(original), _content(spoken['text'])
+        if source != heard and (min(len(source), len(heard)) < 10 or SequenceMatcher(None, source, heard).ratio() < 0.88):
+            continue
+        # Keep the displayed wording and timing. Borrow punctuation only when
+        # every recognized word agrees, never an ASR spelling of a person's name.
+        if source == heard:
+            text = spoken['text']
+        elif re.search(r'[\u3400-\u9fff]', original):
+            text = original
+        else:
+            text = ' '.join(row['text'] for row in rows)
+        merged = dict(rows[0], end_time=rows[-1]['end_time'], text=text)
+        result[indexes[0]:indexes[-1] + 1] = [merged]
+        grouped += len(rows) - 1
+    return result, grouped
+
+
 def merge_picture_and_speech(picture, speech):
     """Keep OCR timings intact; add whole spoken cues only in uncovered intervals.
 
@@ -446,31 +577,85 @@ def merge_picture_and_speech(picture, speech):
             item = dict(cue, source='audio')
             merged.append(item); added.append(item)
         elif not any(_content(x['text']) == _content(cue['text']) for x in overlaps):
+            # One spoken phrase can span multiple OCR captions without changing
+            # speaker boundaries. An exact full-window match is agreement.
+            ordered = sorted(overlaps, key=lambda x: (x['start_time'], x['end_time']))
+            if (abs(ordered[0]['start_time'] - cue['start_time']) <= 0.6
+                    and abs(ordered[-1]['end_time'] - cue['end_time']) <= 0.6
+                    and all(-0.05 <= b['start_time'] - a['end_time'] <= 0.5
+                            for a, b in zip(ordered, ordered[1:]))
+                    and _content(''.join(x['text'] for x in ordered)) == _content(cue['text'])):
+                if not all(x.get('speaker') for x in ordered) or len({x.get('speaker') for x in ordered}) > 1:
+                    review.append(dict(cue, reason='Speech wording matches these on-screen captions. Their separate caption breaks were retained; review speaker turns before joining or dubbing.'))
+                continue
             review.append(dict(cue, reason='Speech and on-screen captions overlap or disagree. Review against the video.'))
     merged.sort(key=lambda x: (x['start_time'], x['end_time']))
     return merged, added, review
 
 
+def statement_issues(cues):
+    """Flag likely fragments and crowded captions; do not guess missing words."""
+    issues = []
+    for index, cue in enumerate(cues):
+        text = cue['text'].strip()
+        duration = cue['end_time'] - cue['start_time']
+        reason = None
+        if duration > 8 or len(_content(text)) / max(duration, 0.1) > 25:
+            reason = 'Caption may be too long or too fast to read.'
+        if index + 1 < len(cues):
+            following = cues[index + 1]
+            gap = following['start_time'] - cue['end_time']
+            unfinished = re.search(r'(?:既然|如果|因为|为了|等到|虽然|但是|竟|直|把|被|的|要|将|就)$', text.rstrip('，, '))
+            if unfinished and 0 <= gap <= 1.2:
+                reason = 'This caption may end mid-statement. Compare it with the next caption and use Join next if they belong together.'
+        if reason:
+            issues.append(dict(cue, reason=reason))
+    return issues
+
+
+SUBTITLE_MODES = ('recommended', 'speech', 'auto', 'picture', 'audio', 'funasr', 'hybrid')
+
+def preferred_download_mode():
+    """Cheap capability check; never compile OCR or load models in a download request."""
+    return 'hybrid' if not _funasr_missing() else 'auto'
+
+
+def resolve_subtitle_mode(mode, language='zh'):
+    """Download and Library share one smart choice; use just one speech engine."""
+    if mode not in ('recommended', 'speech'):
+        return mode  # Retain explicit engine choices from existing saved jobs.
+    selected = preferred_download_mode() if language == 'zh' else 'auto'
+    if mode == 'speech':
+        return 'funasr' if selected == 'hybrid' else 'audio'
+    return selected
+
+
 def capabilities():
     reason = _whisper_missing()
-    return {'speech_available': not reason, 'speech_reason': reason, 'ocr_available': bool(_ocr_helper())}
+    return {'speech_available': not reason, 'speech_reason': reason, 'ocr_available': bool(_ocr_helper()), 'funasr_available': not _funasr_missing(), 'funasr_reason': _funasr_missing()}
 
 
 def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = 'auto',
-                     language: str = 'zh', report=None, progress=None) -> tuple:
+                     language: str = 'zh', report=None, progress=None, cpu_threads=2) -> tuple:
     """OCR plus speech gap recovery, or explicit OCR/audio; save only valid results."""
-    if mode not in ('auto', 'picture', 'audio') or language not in ('zh', 'en', 'auto'):
+    requested_mode = mode
+    mode = resolve_subtitle_mode(mode, language)
+    if mode not in ('auto', 'picture', 'audio', 'funasr', 'hybrid') or language not in ('zh', 'en', 'auto'):
         raise ValueError('Choose a supported subtitle mode and spoken language.')
+    if mode in ('funasr', 'hybrid') and language != 'zh':
+        raise ValueError('Choose Chinese as the spoken language for Paraformer.')
+    if isinstance(cpu_threads, bool) or cpu_threads not in (1, 2, 4):
+        raise ValueError('Choose a supported CPU mode.')
     report = report if report is not None else {}
-    report.update(warnings=[], audio_added=0, review_candidates=[], mode=mode, language=language)
+    report.update(warnings=[], phrase_joins=0, audio_added=0, review_candidates=[], mode=mode, requested_mode=requested_mode, language=language)
     progress = progress or (lambda stage: None)
     video_path = Path(video_path)
     srt_path = video_path.with_suffix('.srt')
-    with _lock, _progress_session(progress), tempfile.TemporaryDirectory() as tmp_name:
+    with _lock, _progress_session(progress, cpu_threads), tempfile.TemporaryDirectory() as tmp_name:
         tmp = Path(tmp_name)
         generated = tmp / 'generated.srt'
         cues = []
-        if mode != 'audio':
+        if mode not in ('audio', 'funasr'):
             progress('Reading on-screen captions')
             try:
                 cues = _subtitles_from_picture(video_path, ffmpeg_bin, tmp)
@@ -478,7 +663,20 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
                 report['warnings'].append('On-screen caption recognition failed; speech recognition will be tried in automatic mode.')
         picture = normalize_segments([{'start_time': a, 'end_time': b, 'text': text} for a, b, text in cues])
         speech = []
-        if mode != 'picture':
+        if mode == 'funasr':
+            report['warnings'].append('Paraformer does not identify speaker turns. A caption can contain two voices; review speaker boundaries before translating or dubbing. Use video text when available to retain its caption breaks.')
+        if mode == 'hybrid' and not picture:
+            report['warnings'].append('No on-screen captions were recognised; speech could not be cross-checked against the picture.')
+        if mode in ('funasr', 'hybrid'):
+            try:
+                _subtitles_from_funasr(video_path, ffmpeg_bin, tmp, generated)
+                speech = import_subtitles(generated.read_bytes(), generated.name)['segments']
+                report['speech_engine'] = 'paraformer'
+            except Exception as exc:
+                if not picture:
+                    raise
+                report['warnings'].append('Chinese speech comparison failed; kept on-screen captions. ' + str(exc))
+        elif mode != 'picture':
             reason = _whisper_missing()
             if reason:
                 if not picture:
@@ -490,22 +688,27 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
                     audio_path = tmp / 'speech.srt'
                     _subtitles_from_audio(video_path, ffmpeg_bin, tmp, audio_path, language=language)
                     speech = import_subtitles(audio_path.read_bytes(), audio_path.name)['segments']
+                    report['speech_engine'] = 'whisper'
                 except Exception as exc:
                     if not picture:
                         raise
                     report['warnings'].append('Speech transcription failed; kept the on-screen captions. ' + str(exc))
         progress('Checking and combining captions')
         if picture and speech:
-            combined, added, review = merge_picture_and_speech(picture, speech)
+            refined, joins = refine_picture_phrases(picture, speech)
+            report['phrase_joins'] = joins
+            combined, added, review = merge_picture_and_speech(refined, speech)
             report.update(audio_added=len(added), review_candidates=review)
             method = 'hybrid'
         elif picture:
             combined = [dict(x, source='picture') for x in picture]; method = 'picture'
         else:
-            combined = [dict(x, source='audio') for x in speech]; method = 'audio'
+            combined = [dict(x, source='audio') for x in speech]; method = 'funasr' if mode in ('funasr', 'hybrid') else 'audio'
         if not combined:
             raise RuntimeError('No usable dialogue was recognised; the existing subtitles were kept.')
         report.update(picture_captions=len(picture), speech_captions=len(speech), method=method)
+        report['quality_issues'] = statement_issues(combined)
+        report['quality_state'] = 'needs_review' if report['review_candidates'] or report['quality_issues'] or report['warnings'] else 'ready'
         generated.write_text(export_subtitles(combined, 'srt'), encoding='utf-8')
         parsed = import_subtitles(generated.read_bytes(), generated.name)
         if not parsed['segments']:
@@ -520,10 +723,16 @@ def create_subtitles(video_path: Path, ffmpeg_bin: str = "ffmpeg", mode: str = '
             os.replace(staged, srt_path)
         finally:
             staged.unlink(missing_ok=True)
-        # Keep disputed speech available for review during this session, without
-        # adding a second subtitle file beside the user's video.
+        # Save review hints against this exact SRT, without extra media sidecars.
         key = str(video_path.resolve())
         if key not in _analysis_cache and len(_analysis_cache) >= 100:
             _analysis_cache.pop(next(iter(_analysis_cache)))
         _analysis_cache[key] = (srt_path.stat().st_mtime_ns, copy.deepcopy(report))
+        if _review_store is not None and _review_store.path.exists():
+            try:
+                _review_store.save_analysis(key, analysis_revision(srt_path), report)
+            except Exception as exc:
+                report['warnings'].append('Review hints could not be saved for restart: ' + str(exc))
+                report['quality_state'] = 'needs_review'
+                _analysis_cache[key] = (srt_path.stat().st_mtime_ns, copy.deepcopy(report))
         return srt_path, method

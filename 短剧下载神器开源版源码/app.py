@@ -27,7 +27,7 @@ from urllib.parse import quote, unquote, urljoin, urlparse, parse_qs
 
 import requests
 import gz360
-from hongguo_device import credentials as hongguo_credentials, DeviceConfigurationError, make_identity, register as register_hongguo, PARSER_DEVICE_PROFILE
+from hongguo_device import credentials as hongguo_credentials, DeviceConfigurationError, make_identity, register as register_hongguo, PARSER_DEVICE_PROFILE, CONFIG_LOCK
 from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, request, send_from_directory
 
@@ -98,7 +98,7 @@ logging.getLogger("werkzeug").addFilter(_SkipProgressPolls())
 handle_video_request = parser_module.handle_video_request
 from title_translation import translate_title
 from subtitle_formats import import_subtitles, normalize_segments, export_subtitles
-from subtitles import capabilities as subtitle_capabilities, create_subtitles, unavailable_reason as subtitles_unavailable_reason  # noqa: E402
+from subtitles import SUBTITLE_MODES, capabilities as subtitle_capabilities, create_subtitles, unavailable_reason as subtitles_unavailable_reason  # noqa: E402
 
 
 # ───────────────────────── 配置 ─────────────────────────
@@ -107,7 +107,6 @@ def get_config_path() -> Path:
     return parser_module.get_runtime_base_dir() / "config.json"
 
 
-CONFIG_LOCK = threading.Lock()
 
 
 def write_local_config(cfg: dict) -> None:
@@ -164,6 +163,8 @@ def get_config():
 def save_config():
     try:
         values = hongguo_credentials(request.get_json(silent=True))
+    except parser_module.VideoServiceUnavailable as exc:
+        return jsonify({"error": str(exc), "code": "hongguo_video_unavailable"}), 503
     except DeviceConfigurationError as exc:
         return jsonify({"error": str(exc), "code": "device_configuration"}), 400
     device_id, install_id, platform = values['device_id'], values['install_id'], values['platform']
@@ -1130,6 +1131,8 @@ def initialize_subtitle_jobs():
         if SUBTITLE_JOB_STORE is not None:
             return
         SUBTITLE_JOB_STORE = store
+        from subtitles import configure_review_store
+        configure_review_store(store)
         for job in store.load():
             if job['id'] in SUBTITLE_JOBS:
                 continue
@@ -1137,6 +1140,11 @@ def initialize_subtitle_jobs():
             if job['status'] not in ('queued', 'running'):
                 continue
             video = local_video_path(job.get('video_url', ''))
+            if video is None and download_file_state(job.get('video_url', '')) == 'unknown':
+                job.update(status='queued', progress=None, stage='Waiting for download folder')
+                job.pop('error', None)
+                save_subtitle_job(job)
+                continue
             if video is None or str(video.resolve()) != job.get('key'):
                 job.update(status='error', progress=None, error='The saved video is unavailable. Select its download folder again, then retry from Library.')
                 save_subtitle_job(job)
@@ -1172,9 +1180,9 @@ def run_subtitle_repair(job_id, video_path):
                     SUBTITLE_JOBS[job_id].update(stage=text, progress=None, completed=None, total=None)
         report = {}
         srt, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(),
-            mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage)
+            mode=options.get('mode', 'auto'), language=options.get('language', 'zh'), report=report, progress=stage, cpu_threads=options.get('cpu_threads', 2))
         count = len(import_subtitles(srt.read_bytes(), srt.name)['segments'])
-        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'phrase_joins': report.get('phrase_joins', 0), 'review_count': len(report.get('review_candidates', []))}
+        result = {'status': 'done', 'progress': 100, 'stage': 'Subtitles ready', 'captions': count, 'method': method, 'updated_at': time.time(), 'warnings': report.get('warnings', []), 'audio_added': report.get('audio_added', 0), 'phrase_joins': report.get('phrase_joins', 0), 'review_count': len(report.get('review_candidates', [])), 'quality_issue_count': len(report.get('quality_issues', [])), 'quality_state': report.get('quality_state', 'ready'), 'speech_engine': report.get('speech_engine', '')}
     except Exception as exc:
         app.logger.exception('Subtitle regeneration failed')
         result = {'status': 'error', 'progress': None, 'error': str(exc)}
@@ -1192,20 +1200,25 @@ def subtitle_regenerate():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict) or not isinstance(payload.get('url'), str):
         return jsonify({'error': 'Choose a saved episode.'}), 400
-    mode, language = payload.get('mode', 'auto'), payload.get('language', 'zh')
-    if mode not in ('auto', 'picture', 'audio') or language not in ('zh', 'en', 'auto'):
+    mode, language = payload.get('mode', 'recommended'), payload.get('language', 'zh')
+    if mode not in SUBTITLE_MODES or language not in ('zh', 'en', 'auto'):
         return jsonify({'error': 'Choose a valid subtitle method and spoken language.'}), 400
+    if mode in ('funasr', 'hybrid') and language != 'zh':
+        return jsonify({'error': 'Choose Chinese as the spoken language for Paraformer.'}), 400
+    cpu_threads = payload.get('cpu_threads', 2)
+    if isinstance(cpu_threads, bool) or cpu_threads not in (1, 2, 4):
+        return jsonify({'error': 'Choose a supported CPU mode.'}), 400
     video = local_video_path(payload['url'])
     if video is None:
         return jsonify({'error': 'Saved episode not found.'}), 404
     try:
-        job = enqueue_subtitle_job(video, urlparse(payload['url']).path, mode, language)
+        job = enqueue_subtitle_job(video, urlparse(payload['url']).path, mode, language, cpu_threads=cpu_threads)
     except ValueError as exc:
         return jsonify(error=str(exc)), 429
     return jsonify(job), 202
 
 
-def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False):
+def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False, cpu_threads=2):
     """Downloads and Library share one OCR worker; video transfers never wait for it."""
     key = str(video.resolve())
     with SUBTITLE_JOBS_LOCK:
@@ -1223,7 +1236,7 @@ def enqueue_subtitle_job(video, url, mode='auto', language='zh', download=False)
                         SUBTITLE_JOB_STORE.remove(old_id)
                     break
         job_id = os.urandom(16).hex()
-        job = {'id': job_id, 'key': key, 'video_url': url, 'created_at': time.time(), 'original_srt_mtime_ns': video.with_suffix('.srt').stat().st_mtime_ns if video.with_suffix('.srt').is_file() else 0, 'title': video.stem, 'status': 'queued', 'progress': None, 'stage': 'Waiting for subtitle worker', 'mode': mode, 'language': language, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
+        job = {'id': job_id, 'key': key, 'video_url': url, 'created_at': time.time(), 'original_srt_mtime_ns': video.with_suffix('.srt').stat().st_mtime_ns if video.with_suffix('.srt').is_file() else 0, 'title': video.stem, 'status': 'queued', 'progress': None, 'stage': 'Waiting for subtitle worker', 'mode': mode, 'language': language, 'cpu_threads': cpu_threads, 'subtitle_url': url.rsplit('.', 1)[0] + '.srt'}
         SUBTITLE_JOBS[job_id] = job
         try:
             save_subtitle_job(job)
@@ -1270,9 +1283,110 @@ def subtitle_reconcile():
     return jsonify(jobs=results)
 
 
+def download_subtitle_settings(resolve=False):
+    from subtitles import resolve_subtitle_mode
+    saved=read_local_config().get('download_subtitles',{})
+    saved=saved if isinstance(saved,dict) else {}
+    mode=saved.get('mode','recommended');language=saved.get('language','zh');cpu=saved.get('cpu_threads',2)
+    if mode not in SUBTITLE_MODES:mode='recommended'
+    if language not in ('zh','en','auto'):language='zh'
+    if mode in ('hybrid','funasr'):language='zh'
+    if isinstance(cpu,bool) or cpu not in (1,2,4):cpu=2
+    if resolve:mode=resolve_subtitle_mode(mode,language)
+    return dict(mode=mode,language=language,cpu_threads=cpu)
+
+
+@app.route('/api/subtitles/download-settings',methods=['GET','POST'])
+def automatic_subtitle_settings():
+    if request.method=='POST':
+        data=request.get_json(silent=True)
+        if not isinstance(data,dict) or data.get('mode') not in SUBTITLE_MODES or data.get('language') not in ('zh','en','auto') or isinstance(data.get('cpu_threads'),bool) or data.get('cpu_threads') not in (1,2,4) or (data['mode'] in ('hybrid','funasr') and data['language']!='zh'):
+            return jsonify(error='Choose valid download subtitle settings.'),400
+        with CONFIG_LOCK:
+            cfg=read_local_config();cfg['download_subtitles']={k:data[k] for k in ('mode','language','cpu_threads')};write_local_config(cfg)
+    return jsonify(settings=download_subtitle_settings(),effective_mode=download_subtitle_settings(resolve=True)['mode'])
+
+
+@app.post('/api/subtitles/retry-failed')
+def retry_failed_subtitles():
+    payload = request.get_json(silent=True)
+    scope = None
+    if request.data:
+        if not isinstance(payload, dict) or not isinstance(payload.get('urls'), list) or len(payload['urls']) > 10000 or any(not isinstance(url, str) or not url.startswith('/') or url.startswith('//') for url in payload['urls']):
+            return jsonify(error='Choose valid saved episodes to retry.'), 400
+        scope = set(payload['urls'])
+    # Only the newest attempt for a video is eligible: an older error may have
+    # already been repaired, or a replacement may currently be processing.
+    with SUBTITLE_JOBS_LOCK:
+        latest = {}
+        for job in SUBTITLE_JOBS.values():
+            latest[job['key']] = dict(job)
+    failed = [job for job in latest.values() if job['status'] == 'error' and (scope is None or job.get('video_url') in scope)]
+    queued, errors = [], []
+    for old in failed:
+        url = old.get('video_url')
+        video = local_video_path(url) if url else None
+        if video is None:
+            errors.append({'title': old.get('title', 'Episode'), 'error': 'Saved video not found. Reconnect its folder and try again.'})
+            continue
+        try:
+            job = enqueue_subtitle_job(video, url, old.get('mode', 'auto'), old.get('language', 'zh'), download=True, cpu_threads=old.get('cpu_threads', 2))
+            queued.append(job['id'])
+        except ValueError as exc:
+            errors.append({'title': old.get('title', 'Episode'), 'error': str(exc)})
+    return jsonify(queued=len(queued), failed=len(errors), errors=errors), 200
+
+
+@app.post('/api/subtitles/recover')
+def recover_library_subtitles():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict) or not isinstance(payload.get('urls'), list) or len(payload['urls']) > 10000 or any(not isinstance(url, str) or not url.startswith('/') or url.startswith('//') for url in payload['urls']):
+        return jsonify(error='Choose saved episodes to recover.'), 400
+    mode, language, cpu = payload.get('mode', 'recommended'), payload.get('language', 'zh'), payload.get('cpu_threads', 2)
+    if mode not in SUBTITLE_MODES or language not in ('zh', 'en', 'auto') or (mode in ('funasr', 'hybrid') and language != 'zh') or isinstance(cpu, bool) or cpu not in (1, 2, 4):
+        return jsonify(error='Choose valid subtitle settings.'), 400
+    with SUBTITLE_JOBS_LOCK:
+        latest = {job['key']: dict(job) for job in SUBTITLE_JOBS.values()}
+    queued, active, saved, errors = [], 0, 0, []
+    for url in dict.fromkeys(payload['urls']):
+        video = local_video_path(url)
+        if video is None:
+            errors.append({'url': url, 'error': 'Saved video not found. Reconnect its folder and try again.'})
+            continue
+        old = latest.get(str(video.resolve()), {})
+        if old.get('status') in ('queued', 'running'):
+            active += 1
+            continue
+        srt = video.with_suffix('.srt')
+        if srt.is_file() and not srt.is_symlink() and srt.stat().st_size > 0 and old.get('status') != 'error':
+            saved += 1
+            continue
+        settings = old if old.get('status') == 'error' else {}
+        try:
+            job = enqueue_subtitle_job(video, url, settings.get('mode', mode), settings.get('language', language), download=True, cpu_threads=settings.get('cpu_threads', cpu))
+            queued.append(job['id'])
+        except ValueError as exc:
+            errors.append({'url': url, 'error': str(exc)})
+    return jsonify(queued=len(queued), active=active, saved=saved, failed=len(errors), errors=errors)
+
+
+def resume_folder_waiting_subtitles():
+    with SUBTITLE_JOBS_LOCK:
+        for job in SUBTITLE_JOBS.values():
+            if job['status'] != 'queued' or job.get('stage') != 'Waiting for download folder':
+                continue
+            video = local_video_path(job.get('video_url', ''))
+            if video is None or str(video.resolve()) != job.get('key'):
+                continue
+            job.update(stage='Resuming after folder reconnect', progress=None)
+            save_subtitle_job(job)
+            SUBTITLE_REPAIR_POOL.submit(run_subtitle_repair, job['id'], video)
+
+
 @app.get('/api/subtitles/jobs')
 def subtitle_job_list():
     """All shared worker jobs for the separate subtitle workspace, newest first."""
+    resume_folder_waiting_subtitles()
     with SUBTITLE_JOBS_LOCK:
         jobs = [{key: value for key, value in job.items() if key != 'key'}
                 for job in reversed(list(SUBTITLE_JOBS.values()))]
@@ -1464,7 +1578,7 @@ def add_subtitles(result: dict) -> None:
         return
     try:
         report = {}
-        srt_path, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(), report=report)
+        srt_path, method = create_subtitles(video_path, parser_module.get_ffmpeg_binary(), report=report, **download_subtitle_settings(resolve=True))
     except Exception as exc:
         print(f"[subtitles] failed file={video_path.name} error={exc}")
         result["subtitle_error"] = str(exc)
@@ -1472,6 +1586,8 @@ def add_subtitles(result: dict) -> None:
     result["subtitle_url"] = url[: -len(".mp4")] + ".srt"
     result["subtitle_source"] = method
     result["subtitle_warnings"] = report.get("warnings", [])
+    result["subtitle_quality_state"] = report.get("quality_state", "ready")
+    result["subtitle_quality_issue_count"] = len(report.get("quality_issues", []))
     result["subtitle_review_count"] = len(report.get("review_candidates", []))
 
 
@@ -1606,13 +1722,15 @@ def hg():
                     result['subtitle_error'] = 'The saved video was not found. Create subtitles later from Library.'
                 else:
                     try:
-                        result['subtitle_job'] = enqueue_subtitle_job(srt, urlparse(result['url']).path, download=True)
+                        result['subtitle_job'] = enqueue_subtitle_job(srt, urlparse(result['url']).path, download=True, **download_subtitle_settings(resolve=True))
                     except (ValueError, RuntimeError) as exc:
                         result['subtitle_error'] = str(exc)
             else:
                 parser_module.set_progress(key, "subtitles")
                 add_subtitles(result)
         return jsonify(result)
+    except parser_module.VideoServiceUnavailable as exc:
+        return jsonify({"error": str(exc), "code": "hongguo_video_unavailable"}), 503
     except DeviceConfigurationError as exc:
         return jsonify({"error": str(exc), "code": "device_configuration"}), 400
     except parser_module.DownloadFolderUnavailable as exc:

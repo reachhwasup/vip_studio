@@ -27,7 +27,8 @@ async function pollDownloadSubtitles() {
       const base = (task.msg || 'Download complete').replace(/ · subtitles queued(?= · |$)/gi, '').replace(/ · Subtitles:.*$/i, '');
       if (status === 'done') {
         task.subtitle = job.subtitle_url;
-        task.msg = base + ' · Subtitles: ready';
+        task.subtitleQualityState = job.quality_state || 'ready';
+        task.msg = base + (task.subtitleQualityState === 'needs_review' ? ' · Subtitles: saved · review needed' : ' · Subtitles: ready');
         task.detail = [task.detail, ...(job.warnings || [])].filter(Boolean).join(' · ');
         window.dispatchEvent(new CustomEvent('vip-subtitles-saved', {detail: {url: new URL(task.url, window.location.href).pathname, subtitle_url: job.subtitle_url}}));
       } else if (status === 'error') {

@@ -4,6 +4,7 @@ Registration is a best-effort adapter for the existing provider, not an official
 authentication API. Never substitute ANDROID_ID or random numbers for credentials.
 """
 import gzip
+import threading
 import json
 import re
 import time
@@ -13,6 +14,9 @@ import requests
 
 class DeviceConfigurationError(ValueError):
     pass
+
+
+CONFIG_LOCK = threading.RLock()
 
 
 REGISTRATION_URL = 'https://log.snssdk.com/service/2/device_register/'

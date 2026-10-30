@@ -58,8 +58,8 @@ def main():
     run('swift', ROOT / 'macos' / 'icon.swift', BUILD / 'VIPStudio.iconset')
     run('iconutil', '-c', 'icns', BUILD / 'VIPStudio.iconset', '-o', resources / 'VIPStudio.icns')
     info = {'CFBundleIconFile': 'VIPStudio.icns', 'CFBundleName': 'VIP Studio', 'CFBundleDisplayName': 'VIP Studio', 'CFBundleIdentifier': 'studio.vip.drama',
-            'CFBundleExecutable': 'VIPStudio', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.6.33',
-            'CFBundleVersion': '44', 'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True,
+            'CFBundleExecutable': 'VIPStudio', 'CFBundlePackageType': 'APPL', 'CFBundleShortVersionString': '1.6.34',
+            'CFBundleVersion': '45', 'LSMinimumSystemVersion': '26.0', 'NSHighResolutionCapable': True,
             'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
             'SUFeedURL': 'https://github.com/reachhwasup/vip_studio/releases/latest/download/appcast.xml',
             'SUPublicEDKey': (ROOT / 'macos' / 'update-public-key.txt').read_text().strip(),
